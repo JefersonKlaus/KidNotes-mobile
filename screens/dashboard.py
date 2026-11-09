@@ -1,22 +1,26 @@
-"""Tela de dashboard e lista de turmas."""
+"""Dashboard screen: the signed-in teacher and their class list."""
 
 from typing import Any
 
 import flet as ft
 
-from components import avatar
+from i18n import Translator
 from theme import COLORS
 
 
 class DashboardScreen:
     def __init__(
         self,
-        teacher: dict[str, str],
+        account_email: str,
         classes: list[dict[str, Any]],
         on_class_selected: Any,
         on_add_class: Any,
+        tr: Translator,
+        on_sign_out: Any = None,
     ) -> None:
-        self.teacher = teacher
+        self.tr = tr
+        self.account_email = account_email
+        self.on_sign_out = on_sign_out
         self.classes = classes
         self.on_class_selected = on_class_selected
         self.on_add_class = on_add_class
@@ -28,14 +32,20 @@ class DashboardScreen:
                 ft.Container(
                     content=ft.Column(
                         controls=[
-                            ft.Text(
-                                "Escolha uma turma para começar",
-                                size=15,
-                                color=COLORS["muted"],
+                            *(
+                                [
+                                    ft.Text(
+                                        self.tr.t("dashboard.choose_class"),
+                                        size=15,
+                                        color=COLORS["muted"],
+                                    ),
+                                    *[self._class_card(item) for item in self.classes],
+                                ]
+                                if self.classes
+                                else [self._empty_state()]
                             ),
-                            *[self._class_card(item) for item in self.classes],
                             ft.FilledButton(
-                                "Adicionar nova turma",
+                                self.tr.t("dashboard.add_class"),
                                 icon=ft.Icons.ADD,
                                 on_click=self.on_add_class,
                                 height=52,
@@ -62,9 +72,13 @@ class DashboardScreen:
                         controls=[
                             ft.Column(
                                 controls=[
-                                    ft.Text("Olá, professora! 👋", size=14, color=COLORS["muted"]),
                                     ft.Text(
-                                        "Suas turmas",
+                                        self.tr.t("dashboard.greeting"),
+                                        size=14,
+                                        color=COLORS["muted"],
+                                    ),
+                                    ft.Text(
+                                        self.tr.t("dashboard.title"),
                                         size=28,
                                         weight=ft.FontWeight.W_700,
                                         color=COLORS["ink"],
@@ -73,19 +87,58 @@ class DashboardScreen:
                                 spacing=3,
                                 expand=True,
                             ),
-                            avatar(self.teacher["initials"], COLORS["lavender"], size=52),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
-                    ft.Text(
-                        f"{self.teacher['name']} • {self.teacher['role']}",
-                        size=13,
-                        color=COLORS["muted"],
+                    ft.Row(
+                        controls=[
+                            ft.Text(
+                                self.account_email,
+                                size=13,
+                                color=COLORS["muted"],
+                                expand=True,
+                            ),
+                            ft.TextButton(
+                                self.tr.t("dashboard.sign_out"),
+                                icon=ft.Icons.LOGOUT,
+                                on_click=lambda _: self.on_sign_out(),
+                                visible=self.on_sign_out is not None,
+                            ),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],
                 spacing=6,
             ),
             padding=ft.Padding(left=24, right=24, top=28, bottom=22),
+        )
+
+    def _empty_state(self) -> ft.Container:
+        return ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Icon(ft.Icons.GROUPS_OUTLINED, color=COLORS["primary"], size=40),
+                    ft.Text(
+                        self.tr.t("dashboard.empty_title"),
+                        size=16,
+                        weight=ft.FontWeight.W_700,
+                        color=COLORS["ink"],
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                    ft.Text(
+                        self.tr.t("dashboard.empty_message"),
+                        size=13,
+                        color=COLORS["muted"],
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=6,
+            ),
+            bgcolor=COLORS["surface"],
+            border=ft.Border.all(1, COLORS["border"]),
+            border_radius=18,
+            padding=24,
         )
 
     def _class_card(self, class_data: dict[str, Any]) -> ft.Container:
@@ -109,7 +162,9 @@ class DashboardScreen:
                                 color=COLORS["ink"],
                             ),
                             ft.Text(
-                                f"{len(class_data['students'])} crianças • Toque para abrir",
+                                self.tr.plural(
+                                    "dashboard.students_count", class_data.get("student_count", 0)
+                                ),
                                 size=13,
                                 color=COLORS["muted"],
                             ),

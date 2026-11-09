@@ -1,1 +1,1 @@
-"""Telas do aplicativo."""
+"""App screens."""
