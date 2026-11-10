@@ -4,6 +4,7 @@ Run with: flet run main.py
 """
 
 import logging
+import os
 
 import flet as ft
 
@@ -14,6 +15,27 @@ from i18n import Translator, detect_device_language
 from theme import COLORS
 
 logger = logging.getLogger(__name__)
+
+# The app's own loggers (module names). Flet's loggers stay at WARNING unless
+# `flet run -v` sets FLET_LOG_LEVEL.
+APP_LOGGERS = ("__main__", "main", "app", "reports", "database", "screens", "media")
+LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
+
+
+def configure_logging() -> None:
+    """Show the app's logs in the terminal (level: KIDNOTES_LOG_LEVEL, default INFO).
+
+    E.g. every Groq call of "Generate reports" logs its URL, model, HTTP
+    status and Groq's error message (see reports/ai.py).
+    """
+    root_level = logging.getLevelName((os.getenv("FLET_LOG_LEVEL") or "WARNING").upper())
+    app_level = logging.getLevelName((os.getenv("KIDNOTES_LOG_LEVEL") or "INFO").upper())
+    logging.basicConfig(
+        level=root_level if isinstance(root_level, int) else logging.WARNING,
+        format=LOG_FORMAT,
+    )
+    for name in APP_LOGGERS:
+        logging.getLogger(name).setLevel(app_level if isinstance(app_level, int) else logging.INFO)
 
 
 async def main(page: ft.Page) -> None:
@@ -67,4 +89,5 @@ def show_database_error(page: ft.Page, tr: Translator) -> None:
 
 if __name__ == "__main__":
     load_dev_env()  # development only: variables from .env (see .env.example)
+    configure_logging()
     ft.run(main)

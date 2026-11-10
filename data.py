@@ -6,7 +6,6 @@ Classes, students and events are stored in the encrypted database (see
 
 from typing import Any
 
-
 APP_DATA: dict[str, Any] = {
     "teacher": {
         "name": "Prof. Ana Clara",

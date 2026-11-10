@@ -1,5 +1,6 @@
 """Reusable UI components shared across screens."""
 
+import asyncio
 from typing import Any
 
 import flet as ft
@@ -65,6 +66,30 @@ def section_title(title: str, icon: str) -> ft.Row:
     )
 
 
+FIELD_RADIUS = 14
+
+
+def field_border(focused_color: str | None = None) -> Any:
+    """Rounded outline of the app's text fields.
+
+    Flet 1.0 deprecated `TextField(border_radius=, border_color=,
+    focused_border_color=)` (removed in 1.3) and warns (DeprecationWarning)
+    when such a field is put on the page. `border=` is the replacement.
+    Without `focused_color`, the focused outline keeps the theme's color.
+    """
+    normal = ft.OutlineInputBorder(
+        border_radius=FIELD_RADIUS, side=ft.BorderSide(1, COLORS["border"])
+    )
+    if focused_color is None:
+        return normal
+    return {
+        ft.ControlState.DEFAULT: normal,
+        ft.ControlState.FOCUSED: ft.OutlineInputBorder(
+            border_radius=FIELD_RADIUS, side=ft.BorderSide(2, focused_color)
+        ),
+    }
+
+
 def safe_update(control: ft.Control | None) -> None:
     """Update a control if it is on the page (forms are also built in tests, unmounted)."""
     if control is None:
@@ -75,30 +100,88 @@ def safe_update(control: ft.Control | None) -> None:
         pass
 
 
-def info_message(text: str, error: bool = False) -> ft.SnackBar:
-    """Information message shown at the bottom for a few seconds (e.g. "Event saved")."""
-    return ft.SnackBar(
-        content=ft.Row(
-            controls=[
-                ft.Icon(
-                    ft.Icons.ERROR_OUTLINE if error else ft.Icons.INFO_OUTLINE,
-                    color=ft.Colors.WHITE,
-                ),
-                ft.Text(text, color=ft.Colors.WHITE, size=14, expand=True),
-            ],
-            spacing=10,
-        ),
-        bgcolor=ft.Colors.ERROR if error else COLORS["primary"],
-        behavior=ft.SnackBarBehavior.FLOATING,
-        duration=ft.Duration(seconds=4),
-        show_close_icon=True,
-        close_icon_color=ft.Colors.WHITE,
-    )
+NOTICE_SECONDS = 4
 
 
-def empty_state(icon: str, title: str, message: str) -> ft.Container:
-    """Card shown when a list has nothing yet."""
-    return ft.Container(
+class TopNotice:
+    """Information message at the TOP of the screen (e.g. "Report deleted.").
+
+    It floats over the page (`page.overlay`), so the buttons of the bottom
+    action bars stay visible and the page doesn't move. It hides itself after
+    NOTICE_SECONDS (or with its ✕); a new message replaces the previous one.
+    """
+
+    def __init__(self, page: ft.Page) -> None:
+        self.page = page
+        self.control: ft.Container | None = None
+        self._count = 0  # which message is on screen (for the delayed hide)
+
+    def show(self, text: str, error: bool = False) -> None:
+        self._remove()
+        self._count += 1
+        self.control = self._build(text, error)
+        self.page.overlay.append(self.control)
+        self.page.update()
+        self.page.run_task(self._hide_later, self._count)
+
+    def hide(self) -> None:
+        if self._remove():
+            self.page.update()
+
+    async def _hide_later(self, count: int) -> None:
+        await asyncio.sleep(NOTICE_SECONDS)
+        if count == self._count:  # not replaced by a newer message meanwhile
+            self.hide()
+
+    def _remove(self) -> bool:
+        control, self.control = self.control, None
+        if control is not None and control in self.page.overlay:
+            self.page.overlay.remove(control)
+            return True
+        return False
+
+    def _build(self, text: str, error: bool) -> ft.Container:
+        card = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(
+                        ft.Icons.ERROR_OUTLINE if error else ft.Icons.INFO_OUTLINE,
+                        color=ft.Colors.WHITE,
+                    ),
+                    ft.Text(text, color=ft.Colors.WHITE, size=14, expand=True),
+                    ft.IconButton(
+                        icon=ft.Icons.CLOSE,
+                        icon_color=ft.Colors.WHITE,
+                        icon_size=18,
+                        on_click=lambda _: self.hide(),
+                    ),
+                ],
+                spacing=10,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            bgcolor=ft.Colors.ERROR if error else COLORS["primary"],
+            border_radius=14,
+            padding=ft.Padding(left=16, right=4, top=4, bottom=4),
+            margin=12,
+            shadow=ft.BoxShadow(blur_radius=12, color=ft.Colors.with_opacity(0.25, "#000000")),
+        )
+        # Pinned to the top edge, full width; SafeArea keeps it below the status bar.
+        return ft.Container(
+            content=ft.SafeArea(content=card),
+            top=0,
+            left=0,
+            right=0,
+            data="notice",
+        )
+
+
+def empty_state(icon: str, title: str, message: str) -> ft.Row:
+    """Card shown when a list has nothing yet, as wide as the list.
+
+    A Container takes the width of its content (here, centered text), so the
+    card is put in a Row with `expand`: it fills the whole width.
+    """
+    card = ft.Container(
         content=ft.Column(
             controls=[
                 ft.Icon(icon, color=COLORS["primary"], size=40),
@@ -118,7 +201,9 @@ def empty_state(icon: str, title: str, message: str) -> ft.Container:
         border=ft.Border.all(1, COLORS["border"]),
         border_radius=18,
         padding=24,
+        expand=True,
     )
+    return ft.Row(controls=[card])
 
 
 def _stacked_action(label: str, icon: str, on_click: Any, primary: bool) -> ft.FilledButton:

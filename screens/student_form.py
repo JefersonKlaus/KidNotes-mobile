@@ -6,7 +6,7 @@ from typing import Any
 
 import flet as ft
 
-from components import safe_update
+from components import field_border, safe_update
 from database import StudentRepository, StudentValidationError
 from database.students import MIN_BIRTH_DATE, NAME_MAX_LENGTH
 from dates import to_local_date
@@ -52,9 +52,7 @@ class StudentForm:
             max_length=NAME_MAX_LENGTH,
             capitalization=ft.TextCapitalization.WORDS,
             autofocus=not self.is_edit,
-            border_radius=14,
-            border_color=COLORS["border"],
-            focused_border_color=COLORS["primary"],
+            border=field_border(focused_color=COLORS["primary"]),
             on_change=lambda _: self._clear_error(self.name_field),
             on_submit=self.save,
         )
@@ -62,9 +60,7 @@ class StudentForm:
             label=self.tr.t("student_form.birth_label"),
             hint_text=self.tr.t("student_form.birth_hint"),
             read_only=True,
-            border_radius=14,
-            border_color=COLORS["border"],
-            focused_border_color=COLORS["primary"],
+            border=field_border(focused_color=COLORS["primary"]),
             prefix_icon=ft.Icons.CAKE_OUTLINED,
             on_click=self.open_date_picker,
         )

@@ -1,21 +1,37 @@
 """Report screens.
 
-- ReportScreen: choose the period and the students, then generate one report
+- ReportScreen: choose the period and the students, optionally write
+  instructions for the AI (structure, standards...), then generate one report
   per student (AI draft from the events of the period). Lists the reports
-  already generated for the class.
-- ReportReviewScreen: review/edit the draft, then save or share the PDF.
+  already generated for the class, grouped by month (open or delete them).
+  The Groq API key is set in Settings (screens/settings.py).
+- ReportReviewScreen: review/edit the draft, add images from the child's
+  events (see report_photos.py), save the text, generate the PDF (and share
+  it, on phones).
+- DeleteReportDialog: confirmation before deleting a saved report.
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
 
 import flet as ft
 
-from components import bottom_action_bar, page_header, safe_update, section_title
+from components import (
+    bottom_action_bar,
+    field_border,
+    page_header,
+    photo,
+    safe_update,
+    section_title,
+)
+from database.settings import REPORT_INSTRUCTIONS_MAX_LENGTH
 from dates import to_local_date
 from i18n import Translator
 from theme import COLORS
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_PERIOD_DAYS = 182  # about a school semester
 
@@ -33,7 +49,10 @@ class ReportRequest:
     statuses: dict[str, tuple[str, str | None]] = field(default_factory=dict)
     running: bool = False
     error: str | None = None
-    editing_key: bool = False
+    # Months ("2025-07") whose saved reports are shown; None: only the latest month.
+    expanded_months: set[str] | None = None
+    # The teacher's instructions for the AI (structure, standards, sections...).
+    instructions: str = ""
 
 
 class ReportScreen:
@@ -51,9 +70,10 @@ class ReportScreen:
         on_back: Any,
         on_period_change: Any,
         on_generate: Any,
-        on_save_key: Any,
-        on_change_key: Any,
+        on_open_settings: Any,
         on_open_report: Any,
+        on_save_instructions: Any = None,
+        on_delete_report: Any = None,
     ) -> None:
         self.request = request
         self.class_data = class_data
@@ -67,12 +87,14 @@ class ReportScreen:
         self.on_back = on_back
         self.on_period_change = on_period_change
         self.on_generate = on_generate
-        self.on_save_key = on_save_key
-        self.on_change_key = on_change_key
+        self.on_open_settings = on_open_settings
         self.on_open_report = on_open_report
+        self.on_save_instructions = on_save_instructions
+        self.on_delete_report = on_delete_report
         self.chips: dict[str, ft.Chip] = {}
         self.class_chip: ft.Chip | None = None
-        self.key_field: ft.TextField | None = None
+        self.month_groups: dict[str, tuple[ft.Container, ft.Column]] = {}
+        self.instructions_field: ft.TextField | None = None
         self.date_picker: ft.DatePicker | None = None
 
     # --- layout ------------------------------------------------------------------------
@@ -83,7 +105,9 @@ class ReportScreen:
             self._period_row(),
             section_title(self.tr.t("reports.students"), ft.Icons.CHILD_CARE),
             self._students_chips(),
-            self._api_key_section(),
+            section_title(self.tr.t("reports.instructions"), ft.Icons.EDIT_NOTE),
+            self._instructions_field(),
+            *([] if self.has_api_key else [self._api_key_missing()]),
             self._privacy_notice(),
         ]
         if self.request.error:
@@ -95,7 +119,7 @@ class ReportScreen:
         controls += [
             section_title(self.tr.t("reports.saved_title"), ft.Icons.DESCRIPTION_OUTLINED),
             *(
-                [self._saved_row(r) for r in self.saved_reports]
+                self._saved_groups()
                 or [ft.Text(self.tr.t("reports.none_yet"), size=13, color=COLORS["muted"])]
             ),
         ]
@@ -145,11 +169,36 @@ class ReportScreen:
             read_only=True,
             expand=True,
             prefix_icon=ft.Icons.EVENT,
-            border_radius=14,
-            border_color=COLORS["border"],
+            border=field_border(),
             bgcolor=COLORS["surface"],
             on_click=lambda _: self.open_date_picker(which),
         )
+
+    def _instructions_field(self) -> ft.TextField:
+        """Free text the AI follows for the form of the report (never its content)."""
+        self.instructions_field = ft.TextField(
+            value=self.request.instructions,
+            multiline=True,
+            min_lines=3,
+            max_lines=10,
+            max_length=REPORT_INSTRUCTIONS_MAX_LENGTH,
+            capitalization=ft.TextCapitalization.SENTENCES,
+            hint_text=self.tr.t("reports.instructions_hint"),
+            helper=self.tr.t("reports.instructions_help"),
+            border=field_border(focused_color=COLORS["primary"]),
+            bgcolor=COLORS["surface"],
+            disabled=self.request.running,
+            on_change=self._on_instructions_change,
+            on_blur=lambda _: self.save_instructions(),
+        )
+        return self.instructions_field
+
+    def _on_instructions_change(self, event: Any) -> None:
+        self.request.instructions = event.control.value or ""
+
+    def save_instructions(self) -> None:
+        if self.on_save_instructions is not None:
+            self.on_save_instructions(self.request.instructions)
 
     def _style_chip(self, chip: ft.Chip) -> None:
         chip.label.color = ft.Colors.WHITE if chip.selected else COLORS["ink"]
@@ -183,51 +232,23 @@ class ReportScreen:
             controls=[*self.chips.values(), self.class_chip], wrap=True, spacing=8, run_spacing=8
         )
 
-    def _api_key_section(self) -> ft.Control:
-        if self.has_api_key and not self.request.editing_key:
-            return ft.Row(
+    def _api_key_missing(self) -> ft.Container:
+        """No Groq key yet: it is set in Settings."""
+        return ft.Container(
+            content=ft.Row(
                 controls=[
-                    ft.Icon(ft.Icons.KEY, size=18, color=COLORS["primary"]),
-                    ft.Text(
-                        self.tr.t("reports.api_key_configured"),
-                        size=13,
-                        color=COLORS["muted"],
-                        expand=True,
-                    ),
-                    ft.TextButton(
-                        self.tr.t("reports.api_key_change"),
-                        on_click=lambda _: self.on_change_key(),
-                    ),
+                    ft.Icon(ft.Icons.KEY, color=COLORS["primary"], size=20),
+                    ft.Text(self.tr.t("reports.api_key_missing"), size=13, color=COLORS["ink"],
+                            expand=True),
+                    ft.TextButton(self.tr.t("menu.settings"), icon=ft.Icons.SETTINGS_OUTLINED,
+                                  on_click=lambda _: self.on_open_settings()),
                 ],
-                spacing=8,
-            )
-        self.key_field = ft.TextField(
-            label=self.tr.t("reports.api_key"),
-            password=True,
-            can_reveal_password=True,
-            autocorrect=False,
-            enable_suggestions=False,
-            helper=self.tr.t("reports.api_key_help"),
+                spacing=10,
+            ),
+            border=ft.Border.all(1, COLORS["border"]),
             border_radius=14,
-            border_color=COLORS["border"],
-            bgcolor=COLORS["surface"],
-            expand=True,
-        )
-        return ft.Column(
-            controls=[
-                self.key_field,
-                ft.Row(
-                    controls=[
-                        ft.OutlinedButton(
-                            self.tr.t("reports.api_key_save"),
-                            icon=ft.Icons.KEY,
-                            on_click=self.save_key,
-                        )
-                    ],
-                    alignment=ft.MainAxisAlignment.END,
-                ),
-            ],
-            spacing=6,
+            padding=ft.Padding(left=12, right=4, top=6, bottom=6),
+            data="api-key-missing",
         )
 
     def _privacy_notice(self) -> ft.Container:
@@ -299,6 +320,82 @@ class ReportScreen:
             data=f"status:{student_id}",
         )
 
+    # --- saved reports, grouped by month --------------------------------------------------
+
+    def _saved_groups(self) -> list[ft.Control]:
+        """One group per month the reports were generated in, newest first."""
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for report in self.saved_reports:  # already newest first
+            created = to_local_date(report["created_at"])
+            key = f"{created.year:04d}-{created.month:02d}" if created else "?"
+            groups.setdefault(key, []).append(report)
+        expanded = self._expanded_months(list(groups))
+        self.month_groups = {}
+        controls: list[ft.Control] = []
+        for key, reports in groups.items():
+            is_open = key in expanded
+            rows = ft.Column(controls=[self._saved_row(r) for r in reports], spacing=10,
+                             visible=is_open)
+            header = self._month_header(key, len(reports), is_open)
+            self.month_groups[key] = (header, rows)
+            controls.append(ft.Column(controls=[header, rows], spacing=10,
+                                      data=f"month:{key}"))
+        return controls
+
+    def _expanded_months(self, keys: list[str]) -> set[str]:
+        if self.request.expanded_months is None:  # default: only the latest month
+            self.request.expanded_months = set(keys[:1])
+        return self.request.expanded_months
+
+    def _month_title(self, key: str) -> str:
+        year, _, month = key.partition("-")
+        if not month:
+            return key
+        return self.tr.format_month(date(int(year), int(month), 1))
+
+    def _month_header(self, key: str, count: int, is_open: bool) -> ft.Container:
+        """Tap to show or hide the reports of the month."""
+        return ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.EXPAND_MORE if is_open else ft.Icons.CHEVRON_RIGHT,
+                            color=COLORS["primary"]),
+                    ft.Text(self._month_title(key), size=15, weight=ft.FontWeight.W_700,
+                            color=COLORS["ink"], expand=True),
+                    ft.Container(
+                        content=ft.Text(str(count), size=12, weight=ft.FontWeight.W_700,
+                                        color=COLORS["primary"]),
+                        bgcolor=COLORS["lavender"],
+                        border_radius=10,
+                        padding=ft.Padding(left=8, right=8, top=2, bottom=2),
+                    ),
+                ],
+                spacing=8,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.Padding(left=4, right=8, top=8, bottom=8),
+            border_radius=10,
+            on_click=lambda _, k=key: self.toggle_month(k),
+            data=f"month-header:{key}",
+        )
+
+    def toggle_month(self, key: str) -> None:
+        """Show/hide a month's reports, in place (the page doesn't move)."""
+        expanded = self.request.expanded_months
+        if expanded is None:
+            expanded = self.request.expanded_months = set()
+        if key in expanded:
+            expanded.discard(key)
+        else:
+            expanded.add(key)
+        header, rows = self.month_groups[key]
+        rows.visible = key in expanded
+        header.content.controls[0].icon = (
+            ft.Icons.EXPAND_MORE if rows.visible else ft.Icons.CHEVRON_RIGHT
+        )
+        safe_update(rows)
+        safe_update(header)
+
     def _saved_row(self, report: dict[str, Any]) -> ft.Container:
         created = to_local_date(report["created_at"])
         return ft.Container(
@@ -326,6 +423,21 @@ class ReportScreen:
                         ],
                         spacing=2,
                         expand=True,
+                    ),
+                    *(
+                        [
+                            ft.IconButton(
+                                icon=ft.Icons.DELETE_OUTLINE,
+                                icon_color=ft.Colors.ERROR,
+                                tooltip=self.tr.t("reports.delete"),
+                                # Not while generating: a status line may point to it.
+                                disabled=self.request.running,
+                                on_click=lambda _: self.on_delete_report(report),
+                                data=f"delete:{report['id']}",
+                            )
+                        ]
+                        if self.on_delete_report is not None
+                        else []
                     ),
                     ft.Icon(ft.Icons.CHEVRON_RIGHT, color=COLORS["muted"]),
                 ],
@@ -390,14 +502,6 @@ class ReportScreen:
         end = picked if which == "end" else self.request.end
         self.on_period_change(start, end)  # re-renders: event counts depend on the period
 
-    def save_key(self, _: Any = None) -> None:
-        assert self.key_field is not None
-        key = (self.key_field.value or "").strip()
-        if not key:
-            self.key_field.error = self.tr.t("reports.error.empty_key")
-            safe_update(self.key_field)
-            return
-        self.on_save_key(key)
 
 
 class ReportReviewScreen:
@@ -412,6 +516,10 @@ class ReportReviewScreen:
         on_save_pdf: Any,
         on_share_pdf: Any,
         on_back: Any,
+        on_save_text: Any = None,
+        photos: list[tuple[str, bytes | None]] | None = None,
+        on_add_photos: Any = None,
+        on_remove_photo: Any = None,
     ) -> None:
         self.report = report
         self.student_name = student_name
@@ -422,6 +530,10 @@ class ReportReviewScreen:
         self.on_save_pdf = on_save_pdf
         self.on_share_pdf = on_share_pdf
         self.on_back = on_back
+        self.on_save_text = on_save_text
+        self.photos = photos or []  # (photo id, bytes or None if unavailable), in order
+        self.on_add_photos = on_add_photos
+        self.on_remove_photo = on_remove_photo
         self.field: ft.TextField | None = None
 
     def build(self) -> ft.Column:
@@ -430,9 +542,7 @@ class ReportReviewScreen:
             multiline=True,
             min_lines=14,
             capitalization=ft.TextCapitalization.SENTENCES,
-            border_radius=14,
-            border_color=COLORS["border"],
-            focused_border_color=COLORS["primary"],
+            border=field_border(focused_color=COLORS["primary"]),
             bgcolor=COLORS["surface"],
             text_size=15,
             on_change=lambda e: self.on_change(e.control.value or ""),
@@ -445,11 +555,26 @@ class ReportReviewScreen:
         return ft.Column(
             controls=[
                 ft.Container(
-                    content=page_header(
-                        self.tr.t("report_review.title"),
-                        self.student_name,
-                        on_back=lambda _: self.on_back(),
-                        back_tooltip=self.tr.t("common.back"),
+                    content=ft.Row(
+                        controls=[
+                            ft.Container(
+                                content=page_header(
+                                    self.tr.t("report_review.title"),
+                                    self.student_name,
+                                    on_back=lambda _: self.on_back(),
+                                    back_tooltip=self.tr.t("common.back"),
+                                ),
+                                expand=True,
+                            ),
+                            # Phones: send the PDF (WhatsApp, e-mail, Drive...).
+                            ft.OutlinedIconButton(
+                                icon=ft.Icons.SHARE,
+                                tooltip=self.tr.t("report_review.share_pdf"),
+                                on_click=self.on_share_pdf,
+                                visible=self.can_share,
+                            ),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     padding=ft.Padding(left=12, right=20, top=20, bottom=10),
                 ),
@@ -472,6 +597,7 @@ class ReportReviewScreen:
                                 padding=12,
                             ),
                             self.field,
+                            *self._photos_section(),
                         ],
                         spacing=12,
                         horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
@@ -482,20 +608,128 @@ class ReportReviewScreen:
             spacing=0,
         )
 
-    def bottom_bar(self) -> ft.Control:
-        if self.can_share:
-            return bottom_action_bar(
-                self.tr.t("report_review.share_pdf"),
-                ft.Icons.SHARE,
-                self.on_share_pdf,
-                secondary=(self.tr.t("report_review.save_pdf"), ft.Icons.DOWNLOAD,
-                           self.on_save_pdf),
+    def _photos_section(self) -> list[ft.Control]:
+        """Thumbnails of the chosen photos (each with ✕) and "Add images"."""
+        if self.on_add_photos is None:
+            return []
+        controls: list[ft.Control] = [
+            section_title(
+                f"{self.tr.t('report_review.photos_title')} ({len(self.photos)})",
+                ft.Icons.PHOTO_LIBRARY_OUTLINED,
+            ),
+            ft.Text(self.tr.t("report_review.photos_hint"), size=12, color=COLORS["muted"]),
+        ]
+        if self.photos:
+            controls.append(
+                ft.Row(controls=[self._thumbnail(pid, data) for pid, data in self.photos],
+                       wrap=True, spacing=8, run_spacing=8)
             )
-        return bottom_action_bar(
-            self.tr.t("report_review.save_pdf"), ft.Icons.DOWNLOAD, self.on_save_pdf
+        controls.append(
+            ft.OutlinedButton(
+                self.tr.t("report_review.add_photos"),
+                icon=ft.Icons.ADD_PHOTO_ALTERNATE_OUTLINED,
+                on_click=lambda _: self.on_add_photos(),
+                height=48,
+            )
+        )
+        return controls
+
+    def _thumbnail(self, photo_id: str, data: bytes | None) -> ft.Stack:
+        return ft.Stack(
+            controls=[
+                photo(data, self.tr.t("report_review.photo_unavailable"), width=96, height=96),
+                ft.Container(
+                    content=ft.IconButton(
+                        icon=ft.Icons.CLOSE,
+                        icon_size=16,
+                        tooltip=self.tr.t("report_review.remove_photo"),
+                        on_click=lambda _, pid=photo_id: self.on_remove_photo(pid),
+                        data=f"remove-photo:{photo_id}",
+                    ),
+                    bgcolor=ft.Colors.WHITE,
+                    border_radius=20,
+                    width=32,
+                    height=32,
+                    alignment=ft.Alignment.CENTER,
+                    top=4,
+                    right=4,
+                ),
+            ],
+            width=96,
+            height=96,
         )
 
-    def show_error(self, message: str) -> None:
+    def bottom_bar(self) -> ft.Control:
+        """Save the text (left) and generate the PDF (right), side by side."""
+        return bottom_action_bar(
+            self.tr.t("report_review.generate_pdf"),
+            ft.Icons.PICTURE_AS_PDF,
+            self.on_save_pdf,
+            secondary=(
+                self.tr.t("report_review.save_text"),
+                ft.Icons.SAVE_OUTLINED,
+                lambda _: self.on_save_text(),
+            ),
+        )
+
+    def show_error(self, message: str | None) -> None:
         if self.field is not None:
             self.field.error = message
             safe_update(self.field)
+
+
+class DeleteReportDialog:
+    """Confirmation before deleting a saved report (it can't be undone)."""
+
+    def __init__(
+        self,
+        repository: Any,
+        tr: Translator,
+        report: dict[str, Any],
+        student_name: str,
+        on_deleted: Any,
+        on_cancel: Any,
+    ) -> None:
+        self.repository = repository
+        self.tr = tr
+        self.report = report
+        self.student_name = student_name
+        self.on_deleted = on_deleted
+        self.on_cancel = on_cancel
+        self.error_text: ft.Text | None = None
+
+    def build(self) -> ft.AlertDialog:
+        self.error_text = ft.Text("", color=ft.Colors.ERROR, size=13, visible=False)
+        message = self.tr.t(
+            "delete_report.message",
+            name=self.student_name,
+            start=self.tr.format_date(self.report["period_start"]),
+            end=self.tr.format_date(self.report["period_end"]),
+        )
+        return ft.AlertDialog(
+            modal=True,
+            title=ft.Text(self.tr.t("delete_report.title")),
+            content=ft.Column(controls=[ft.Text(message), self.error_text], tight=True, spacing=8),
+            actions=[
+                ft.TextButton(self.tr.t("common.cancel"), on_click=lambda _: self.on_cancel()),
+                ft.FilledButton(
+                    self.tr.t("delete_report.confirm"),
+                    icon=ft.Icons.DELETE_OUTLINE,
+                    on_click=self.confirm,
+                    style=ft.ButtonStyle(bgcolor=ft.Colors.ERROR, color=ft.Colors.WHITE),
+                ),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+
+    def confirm(self, _: Any = None) -> None:
+        try:
+            self.repository.delete(self.report["id"])
+        except Exception:
+            logger.exception("Could not delete the report.")
+            assert self.error_text is not None
+            self.error_text.value = self.tr.t("delete_report.error")
+            self.error_text.visible = True
+            safe_update(self.error_text)
+            return
+        self.on_deleted(self.report)

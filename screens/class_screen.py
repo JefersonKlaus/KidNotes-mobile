@@ -1,11 +1,14 @@
-"""Class screen: the children of a class.
+"""Class screens: the children of a class, in two modes.
 
-- Top: "Add student" (mostly used at the beginning of the year).
-- List: active children; tap one to open their learning story. The ⋮ menu
-  edits or removes (deactivates) the child.
-- "Transferred students": removed children stay listed (grey, "Transferred
-  on <date>") with a "Reactivate" button.
-- Bottom action bar: "Add event" (photos, comments and the children involved).
+- MAIN (home, the principal class): ☰, the children (tap one to open their
+  learning story), 📄 Reports, and "Add event" in the bottom bar. Students are
+  not added or edited here.
+- MANAGE (Classes page → a class): "Add student" in the bottom bar; tap a
+  child (or ⋮ → Edit) to edit, ⋮ → Remove deactivates them. Removed children
+  stay listed under "Transferred students" (grey) with a "Reactivate" button.
+  ☆ sets the class as the principal one.
+
+`NoClassScreen`: home when the teacher has no class yet.
 """
 
 import logging
@@ -16,9 +19,13 @@ import flet as ft
 from components import avatar, bottom_action_bar, empty_state, page_header, safe_update
 from dates import to_local_date
 from i18n import Translator
+from screens.menu import menu_button
 from theme import COLORS
 
 logger = logging.getLogger(__name__)
+
+MAIN = "main"
+MANAGE = "manage"
 
 
 class ClassScreen:
@@ -28,78 +35,65 @@ class ClassScreen:
         students: list[dict[str, Any]],
         inactive_students: list[dict[str, Any]],
         event_counts: dict[str, int],
-        on_back: Any,
-        on_open_child: Any,
-        on_add_student: Any,
-        on_edit_student: Any,
-        on_remove_student: Any,
-        on_reactivate_student: Any,
-        on_add_event: Any,
         tr: Translator,
+        mode: str = MAIN,
+        on_open_menu: Any = None,
+        on_open_child: Any = None,
+        on_add_event: Any = None,
         on_open_reports: Any = None,
+        on_back: Any = None,
+        on_add_student: Any = None,
+        on_edit_student: Any = None,
+        on_remove_student: Any = None,
+        on_reactivate_student: Any = None,
+        is_default: bool = False,
+        on_set_default: Any = None,
     ) -> None:
         self.tr = tr
+        self.mode = mode
         self.class_data = class_data
         self.students = students
         self.inactive_students = inactive_students
         self.event_counts = event_counts
-        self.on_back = on_back
+        self.on_open_menu = on_open_menu
         self.on_open_child = on_open_child
+        self.on_add_event = on_add_event
+        self.on_open_reports = on_open_reports
+        self.on_back = on_back
         self.on_add_student = on_add_student
         self.on_edit_student = on_edit_student
         self.on_remove_student = on_remove_student
         self.on_reactivate_student = on_reactivate_student
-        self.on_add_event = on_add_event
-        self.on_open_reports = on_open_reports
+        self.is_default = is_default
+        self.on_set_default = on_set_default
+
+    @property
+    def managing(self) -> bool:
+        return self.mode == MANAGE
 
     def build(self) -> ft.Column:
+        if self.students:
+            children = [self._hint(), *[self._student_card(s) for s in self.students]]
+        else:
+            children = [
+                empty_state(
+                    ft.Icons.CHILD_CARE,
+                    self.tr.t("students.empty_title"),
+                    self.tr.t("students.manage_empty_message" if self.managing
+                              else "students.empty_message"),
+                )
+            ]
         return ft.Column(
             controls=[
                 ft.Container(
-                    content=ft.Row(
-                        controls=[
-                            ft.Container(
-                                content=page_header(
-                                    self.class_data["name"],
-                                    self.tr.plural("students.count", len(self.students)),
-                                    on_back=lambda _: self.on_back(),
-                                    back_tooltip=self.tr.t("common.back"),
-                                ),
-                                expand=True,
-                            ),
-                            ft.OutlinedIconButton(
-                                icon=ft.Icons.DESCRIPTION_OUTLINED,
-                                tooltip=self.tr.t("reports.open_reports"),
-                                on_click=lambda _: self.on_open_reports(),
-                                visible=self.on_open_reports is not None,
-                            ),
-                            # Icon only (rarely used: beginning of the year); the
-                            # tooltip names it (long press / screen readers).
-                            ft.OutlinedIconButton(
-                                icon=ft.Icons.PERSON_ADD_ALT_1,
-                                tooltip=self.tr.t("students.add"),
-                                on_click=lambda _: self.on_add_student(),
-                            ),
-                        ],
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
+                    content=self._header(),
                     padding=ft.Padding(left=12, right=20, top=20, bottom=10),
                 ),
                 ft.Container(
                     content=ft.Column(
                         controls=[
-                            *(
-                                [self._hint(), *[self._student_card(s) for s in self.students]]
-                                if self.students
-                                else [
-                                    empty_state(
-                                        ft.Icons.CHILD_CARE,
-                                        self.tr.t("students.empty_title"),
-                                        self.tr.t("students.empty_message"),
-                                    )
-                                ]
-                            ),
-                            *self._transferred_group(),
+                            *children,
+                            *(self._transferred_group() if self.managing else []),
                         ],
                         spacing=12,
                     ),
@@ -109,7 +103,58 @@ class ClassScreen:
             spacing=0,
         )
 
+    def _header(self) -> ft.Row:
+        subtitle = self.tr.plural("students.count", len(self.students))
+        if self.managing:
+            star = ft.OutlinedIconButton(
+                icon=ft.Icons.STAR if self.is_default else ft.Icons.STAR_BORDER,
+                tooltip=self.tr.t("classes.is_default" if self.is_default
+                                  else "classes.set_default"),
+                on_click=None if self.is_default else (lambda _: self.on_set_default()),
+                visible=self.on_set_default is not None,
+                data="set-default",
+            )
+            return ft.Row(
+                controls=[
+                    ft.Container(
+                        content=page_header(self.class_data["name"], subtitle,
+                                            on_back=lambda _: self.on_back(),
+                                            back_tooltip=self.tr.t("common.back")),
+                        expand=True,
+                    ),
+                    star,
+                ],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        titles = ft.Column(
+            controls=[
+                ft.Text(self.class_data["name"], size=22, weight=ft.FontWeight.W_700,
+                        color=COLORS["ink"]),
+                ft.Text(subtitle, size=13, color=COLORS["muted"]),
+            ],
+            spacing=2,
+            expand=True,
+        )
+        return ft.Row(
+            controls=[
+                menu_button(self.tr, self.on_open_menu),
+                titles,
+                ft.OutlinedIconButton(
+                    icon=ft.Icons.DESCRIPTION_OUTLINED,
+                    tooltip=self.tr.t("reports.open_reports"),
+                    on_click=lambda _: self.on_open_reports(),
+                    visible=self.on_open_reports is not None,
+                ),
+            ],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+
     def bottom_bar(self) -> ft.Control | None:
+        if self.managing:
+            return bottom_action_bar(
+                self.tr.t("students.add"), ft.Icons.PERSON_ADD_ALT_1,
+                lambda _: self.on_add_student(),
+            )
         if not self.students:  # an event needs at least one child
             return None
         return bottom_action_bar(
@@ -123,7 +168,8 @@ class ClassScreen:
             content=ft.Row(
                 controls=[
                     ft.Icon(ft.Icons.AUTO_STORIES, color=COLORS["primary"]),
-                    ft.Text(self.tr.t("students.hint"), size=13, color=COLORS["ink"], expand=True),
+                    ft.Text(self.tr.t("students.manage_hint" if self.managing else "students.hint"),
+                            size=13, color=COLORS["ink"], expand=True),
                 ],
                 spacing=10,
             ),
@@ -227,22 +273,7 @@ class ClassScreen:
                         spacing=2,
                         expand=True,
                     ),
-                    ft.PopupMenuButton(
-                        icon=ft.Icons.MORE_VERT,
-                        tooltip=self.tr.t("students.more_options"),
-                        items=[
-                            ft.PopupMenuItem(
-                                content=self.tr.t("students.edit"),
-                                icon=ft.Icons.EDIT_OUTLINED,
-                                on_click=lambda _: self.on_edit_student(student),
-                            ),
-                            ft.PopupMenuItem(
-                                content=self.tr.t("students.remove"),
-                                icon=ft.Icons.PERSON_REMOVE_OUTLINED,
-                                on_click=lambda _: self.on_remove_student(student),
-                            ),
-                        ],
-                    ),
+                    *([self._options_menu(student)] if self.managing else []),
                 ],
                 spacing=12,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -250,8 +281,78 @@ class ClassScreen:
             bgcolor=COLORS["surface"],
             border=ft.Border.all(1, COLORS["border"]),
             border_radius=18,
-            padding=ft.Padding(left=12, right=4, top=12, bottom=12),
-            on_click=lambda _: self.on_open_child(student),
+            padding=ft.Padding(left=12, right=4 if self.managing else 12, top=12, bottom=12),
+            on_click=lambda _: (self.on_edit_student(student) if self.managing
+                                else self.on_open_child(student)),
+            data=f"student:{student['id']}",
+        )
+
+    def _options_menu(self, student: dict[str, Any]) -> ft.PopupMenuButton:
+        """⋮ on a child's card (manage mode): edit, or remove from the class."""
+        return ft.PopupMenuButton(
+            icon=ft.Icons.MORE_VERT,
+            tooltip=self.tr.t("students.more_options"),
+            items=[
+                ft.PopupMenuItem(
+                    content=self.tr.t("students.edit"),
+                    icon=ft.Icons.EDIT_OUTLINED,
+                    on_click=lambda _: self.on_edit_student(student),
+                ),
+                ft.PopupMenuItem(
+                    content=self.tr.t("students.remove"),
+                    icon=ft.Icons.PERSON_REMOVE_OUTLINED,
+                    on_click=lambda _: self.on_remove_student(student),
+                ),
+            ],
+        )
+
+
+class NoClassScreen:
+    """Home when the teacher has no class yet: classes are created on the Classes page."""
+
+    def __init__(self, tr: Translator, on_open_menu: Any, on_open_classes: Any) -> None:
+        self.tr = tr
+        self.on_open_menu = on_open_menu
+        self.on_open_classes = on_open_classes
+
+    def build(self) -> ft.Column:
+        return ft.Column(
+            controls=[
+                ft.Container(
+                    content=ft.Row(
+                        controls=[
+                            menu_button(self.tr, self.on_open_menu),
+                            ft.Text(self.tr.t("dashboard.title"), size=22,
+                                    weight=ft.FontWeight.W_700, color=COLORS["ink"]),
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    padding=ft.Padding(left=12, right=20, top=20, bottom=10),
+                ),
+                ft.Container(
+                    content=ft.Column(
+                        controls=[
+                            empty_state(ft.Icons.GROUPS_OUTLINED,
+                                        self.tr.t("home.no_class_title"),
+                                        self.tr.t("home.no_class_message")),
+                            ft.FilledButton(
+                                self.tr.t("home.open_classes"),
+                                icon=ft.Icons.GROUPS,
+                                on_click=lambda _: self.on_open_classes(),
+                                height=52,
+                                style=ft.ButtonStyle(
+                                    bgcolor=COLORS["primary"],
+                                    color=ft.Colors.WHITE,
+                                    shape=ft.RoundedRectangleBorder(radius=14),
+                                ),
+                            ),
+                        ],
+                        spacing=14,
+                    ),
+                    padding=ft.Padding(left=20, right=20, top=8, bottom=24),
+                ),
+            ],
+            spacing=0,
         )
 
 

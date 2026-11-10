@@ -258,6 +258,13 @@ class EncryptedDatabase:
                 (record_id, payload),
             )
 
+    def delete(self, table: str, record_id: str) -> bool:
+        """Remove a record. Returns False if it didn't exist."""
+        self._check_table(table)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(f"DELETE FROM {table} WHERE id = ?", (record_id,))
+        return cursor.rowcount > 0
+
     def get(self, table: str, record_id: str) -> dict[str, Any] | None:
         """The record's data, or None if it doesn't exist or can't be decrypted."""
         self._check_table(table)

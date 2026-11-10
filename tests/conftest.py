@@ -1,5 +1,6 @@
 """Shared test helpers: fake Flet page, isolated storage and database fixtures."""
 
+import asyncio
 from typing import Any
 
 import flet as ft
@@ -75,6 +76,9 @@ class FakePage:
 
     def __init__(self, locales: list[ft.Locale] | None = None, device_info_fails: bool = False):
         self.controls: list[ft.Control] = []
+        self.overlay: list[ft.Control] = []  # floats over the page (the top notice)
+        self.drawer: ft.NavigationDrawer | None = None  # the side menu
+        self.drawer_open = False
         self.dialogs: list[ft.DialogControl] = []  # open dialogs, like Flet's dialog stack
         self.dialog_popped = False
         self.platform: ft.PagePlatform | None = None  # None: like a desktop window
@@ -94,6 +98,14 @@ class FakePage:
 
     def update(self) -> None:
         pass
+
+    async def show_drawer(self) -> None:
+        if self.drawer is None:
+            raise ValueError("No drawer defined")  # like Flet
+        self.drawer_open = True
+
+    async def close_drawer(self) -> None:
+        self.drawer_open = False
 
     def run_task(self, handler: Any, *args: Any) -> None:
         self.tasks.append((handler, args))
@@ -184,6 +196,46 @@ def sign_in(page: FakePage, email: str = "ana@school.org", password: str = "secr
     fill(fields["Email"], email)
     fill(fields["Password"], password)
     find_button(page.controls[-1], "Sign in").on_click(None)
+
+
+def open_menu(page: FakePage) -> ft.NavigationDrawer:
+    """Tap ☰ (home) or, on screens without it, swipe from the left edge; return the menu."""
+    buttons = find_all(page.controls[-1], lambda c: isinstance(c, ft.IconButton)
+                       and c.data == "menu")
+    asyncio.run(buttons[0].on_click(None) if buttons else page.show_drawer())
+    assert page.drawer_open
+    return page.drawer
+
+
+def side_menu_item(page: FakePage, name: str) -> ft.ListTile:
+    """"settings" or "sign_out" in the side menu."""
+    [item] = [c for c in page.drawer.controls if getattr(c, "data", None) == f"menu:{name}"]
+    return item
+
+
+def sign_out_from_menu(page: FakePage) -> None:
+    open_menu(page)
+    asyncio.run(side_menu_item(page, "sign_out").on_click(None))
+
+
+def notice(page: FakePage) -> ft.Control | None:
+    """The information message shown at the top of the screen (or None)."""
+    found = [c for c in page.overlay if getattr(c, "data", None) == "notice"]
+    return found[-1] if found else None
+
+
+def notice_text(page: FakePage) -> str | None:
+    """Text of the top information message (without the close button)."""
+    shown = notice(page)
+    if shown is None:
+        return None
+    return " ".join(t for t in collect_texts(shown) if t)
+
+
+def notice_is_error(page: FakePage) -> bool:
+    shown = notice(page)
+    icons = find_all(shown, lambda c: isinstance(c, ft.Icon))
+    return icons[0].icon == ft.Icons.ERROR_OUTLINE
 
 
 def screen_text(page: FakePage) -> str:

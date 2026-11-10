@@ -12,7 +12,14 @@ from typing import Any
 
 import flet as ft
 
-from components import bottom_action_bar, page_header, photo, safe_update, section_title
+from components import (
+    bottom_action_bar,
+    field_border,
+    page_header,
+    photo,
+    safe_update,
+    section_title,
+)
 from database import EventValidationError
 from database.events import DESCRIPTION_MAX_LENGTH, MIN_EVENT_DATE
 from dates import to_local_date
@@ -227,9 +234,7 @@ class EventFormScreen:
             max_lines=8,
             max_length=DESCRIPTION_MAX_LENGTH,
             capitalization=ft.TextCapitalization.SENTENCES,
-            border_radius=14,
-            border_color=COLORS["border"],
-            focused_border_color=COLORS["primary"],
+            border=field_border(focused_color=COLORS["primary"]),
             bgcolor=COLORS["surface"],
             on_change=self._on_description_change,
         )
@@ -240,8 +245,7 @@ class EventFormScreen:
             value=self.tr.format_date(self.draft.occurred_on),
             read_only=True,
             prefix_icon=ft.Icons.EVENT,
-            border_radius=14,
-            border_color=COLORS["border"],
+            border=field_border(),
             bgcolor=COLORS["surface"],
             on_click=self.open_date_picker,
         )

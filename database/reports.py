@@ -1,8 +1,9 @@
 """Repository for generated reports (one per student and period).
 
 The text is the AI draft, already with the child's real name put back, and is
-editable by the teacher before exporting the PDF. Stored encrypted like all
-other records.
+editable by the teacher before exporting the PDF. `photo_ids`: photos of the
+child's events the teacher chose for the PDF (references to the encrypted
+event photos, not copies). Stored encrypted like all other records.
 """
 
 import uuid
@@ -13,6 +14,7 @@ from database.connection import EncryptedDatabase
 
 TABLE = "reports"
 TEXT_MAX_LENGTH = 20000
+MAX_REPORT_PHOTOS = 12  # keeps the PDF a reasonable size to share
 
 
 class ReportNotFoundError(LookupError):
@@ -43,6 +45,7 @@ class ReportRepository:
             "text": text[:TEXT_MAX_LENGTH],
             "event_count": event_count,
             "model": model,
+            "photo_ids": [],
             "created_at": now,
             "updated_at": now,
         }
@@ -54,6 +57,22 @@ class ReportRepository:
         if data is None:
             raise ReportNotFoundError(report_id)
         data.update(text=text[:TEXT_MAX_LENGTH], updated_at=datetime.now(timezone.utc).isoformat())
+        self._db.update(TABLE, report_id, data)
+        return self._to_report(report_id, data)
+
+    def delete(self, report_id: str) -> None:
+        """Delete a report for good (the events of the learning story are kept)."""
+        if not self._db.delete(TABLE, report_id):
+            raise ReportNotFoundError(report_id)
+
+    def set_photos(self, report_id: str, photo_ids: list[str]) -> dict[str, Any]:
+        """The photos of the PDF, in order (at most MAX_REPORT_PHOTOS)."""
+        if len(photo_ids) > MAX_REPORT_PHOTOS or len(set(photo_ids)) != len(photo_ids):
+            raise ValueError("invalid photo list")
+        data = self._db.get(TABLE, report_id)
+        if data is None:
+            raise ReportNotFoundError(report_id)
+        data.update(photo_ids=list(photo_ids), updated_at=datetime.now(timezone.utc).isoformat())
         self._db.update(TABLE, report_id, data)
         return self._to_report(report_id, data)
 
@@ -81,6 +100,7 @@ class ReportRepository:
             "text": data["text"],
             "event_count": data["event_count"],
             "model": data["model"],
+            "photo_ids": list(data.get("photo_ids", [])),  # reports made before photos: none
             "created_at": data["created_at"],
             "updated_at": data["updated_at"],
         }

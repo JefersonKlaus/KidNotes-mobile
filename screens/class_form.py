@@ -5,7 +5,7 @@ from typing import Any
 
 import flet as ft
 
-from components import safe_update
+from components import field_border, safe_update
 from database import ClassRepository, ClassValidationError
 from database.classes import NAME_MAX_LENGTH
 from i18n import Translator
@@ -37,9 +37,7 @@ class NewClassForm:
             max_length=NAME_MAX_LENGTH,
             capitalization=ft.TextCapitalization.SENTENCES,
             autofocus=True,
-            border_radius=14,
-            border_color=COLORS["border"],
-            focused_border_color=COLORS["primary"],
+            border=field_border(focused_color=COLORS["primary"]),
             on_change=self._clear_error,
             on_submit=self.save,
         )

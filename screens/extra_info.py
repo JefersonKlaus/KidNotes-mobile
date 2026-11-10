@@ -10,7 +10,7 @@ from typing import Any
 
 import flet as ft
 
-from components import bottom_action_bar, page_header, safe_update
+from components import bottom_action_bar, field_border, page_header, safe_update
 from database import StudentValidationError
 from database.students import NOTES_MAX_LENGTH
 from i18n import Translator
@@ -48,9 +48,7 @@ class ExtraInfoScreen:
             max_length=NOTES_MAX_LENGTH,
             capitalization=ft.TextCapitalization.SENTENCES,
             autofocus=not self.draft,
-            border_radius=14,
-            border_color=COLORS["border"],
-            focused_border_color=COLORS["primary"],
+            border=field_border(focused_color=COLORS["primary"]),
             bgcolor=COLORS["surface"],
             text_size=15,
             on_change=self._on_change,

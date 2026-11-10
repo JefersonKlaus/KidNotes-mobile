@@ -338,3 +338,15 @@ def test_format_age(language, birth, expected):
 def test_format_date():
     assert Translator("en").format_date(date(2021, 8, 5)) == "08/05/2021"
     assert Translator("pt").format_date(date(2021, 8, 5)) == "05/08/2021"
+
+
+def test_default_class_setting(repositories):
+    assert repositories.settings.get_default_class_id() is None
+    repositories.settings.set_last_class_id("from-an-older-version")
+    assert repositories.settings.get_default_class_id() == "from-an-older-version"
+
+    repositories.settings.set_default_class_id("class-1")
+    repositories.settings.set_default_class_id("class-2")  # overwritten
+
+    assert repositories.settings.get_default_class_id() == "class-2"
+

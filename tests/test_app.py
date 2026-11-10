@@ -5,6 +5,7 @@ phone's camera and photo picker are replaced by fakes (tests/conftest.py).
 """
 
 import asyncio
+import sqlite3
 from datetime import date, datetime, timedelta
 from types import SimpleNamespace
 
@@ -14,7 +15,6 @@ import pytest
 
 import main
 from app import AppRoot, KidNotesApp
-from theme import COLORS
 from tests.conftest import (
     JPEG,
     PNG,
@@ -25,10 +25,16 @@ from tests.conftest import (
     fill,
     find_all,
     find_button,
+    notice_is_error,
+    notice_text,
+    open_menu,
     screen_text,
+    side_menu_item,
     sign_in,
+    sign_out_from_menu,
     sign_up,
 )
+from theme import COLORS
 
 
 def start(page, repositories, language="en", gallery=None, camera=None):
@@ -79,8 +85,8 @@ def test_app_starts_in_the_device_language(make_page, device_locale, labels, sub
 @pytest.mark.parametrize(
     ("language", "expected", "unexpected"),
     [
-        ("en", ["5 children", "Add event", "Add student", "Learning story"], ["crianças"]),
-        ("pt", ["5 crianças", "Adicionar evento", "Adicionar aluno", "História de aprendizagem"],
+        ("en", ["5 children", "Add event", "Reports", "Learning story"], ["crianças"]),
+        ("pt", ["5 crianças", "Adicionar evento", "Relatórios", "História de aprendizagem"],
          ["children"]),
     ],
 )
@@ -88,9 +94,8 @@ def test_class_and_child_screens_are_translated(
     make_page, repositories, sample_class, language, expected, unexpected
 ):
     page = make_page()
-    app = start(page, repositories, language)
+    app = start(page, repositories, language)  # home: the only class is the principal one
 
-    app.open_class(sample_class)
     texts = [screen_text(page)]
     app.open_child(repositories.students.list_active(sample_class["id"])[0])
     texts.append(screen_text(page))
@@ -120,24 +125,29 @@ def test_device_language_change_while_running(make_page, repositories):
 
 
 @pytest.mark.parametrize(
-    ("language", "empty_title"), [("en", "No classes yet"), ("pt", "Nenhuma turma ainda")]
+    ("language", "title", "button"),
+    [("en", "No class yet", "Open classes"), ("pt", "Nenhuma turma ainda", "Abrir turmas")],
 )
-def test_home_shows_empty_state_when_database_has_no_classes(
-    make_page, repositories, language, empty_title
+def test_home_without_classes_points_to_the_classes_page(
+    make_page, repositories, language, title, button
 ):
     page = make_page()
-    start(page, repositories, language)
+    app = start(page, repositories, language)
 
-    assert empty_title in screen_text(page)
+    assert title in screen_text(page)
+    find_button(page.controls[-1], button).on_click(None)
+    assert app.route == "classes"
 
 
-def test_home_lists_classes_with_their_active_student_count(make_page, repositories, sample_class):
+def test_classes_page_lists_classes_with_their_active_student_count(
+    make_page, repositories, sample_class
+):
     other = repositories.classes.add("Preschool II - Afternoon", "#B8DCEB")
     alice = by_name(repositories, sample_class["id"], "Alice Martins")
     repositories.students.deactivate(alice["id"])
     page = make_page()
 
-    start(page, repositories, "en")
+    start(page, repositories, "en").open_classes()
 
     text = screen_text(page)
     assert text.index(sample_class["name"]) < text.index(other["name"])
@@ -229,8 +239,15 @@ def test_new_class_form_cancel_closes_without_saving(make_page, repositories):
 
 
 def open_class_screen(page, repositories, class_data, language="en", **kwargs):
+    """Home: the principal class (set here), with its children and "Add event"."""
+    repositories.settings.set_default_class_id(class_data["id"])
+    return start(page, repositories, language, **kwargs)
+
+
+def manage_class_screen(page, repositories, class_data, language="en", **kwargs):
+    """Classes page → the class: add, edit and remove its students."""
     app = start(page, repositories, language, **kwargs)
-    app.open_class(class_data)
+    app.manage_class(class_data)
     return app
 
 
@@ -263,8 +280,7 @@ def student_card(page, name):
     cards = find_all(
         page.controls[-1],
         lambda c: isinstance(c, ft.Container)
-        and isinstance(c.content, ft.Row)
-        and any(isinstance(x, ft.PopupMenuButton) for x in c.content.controls)
+        and str(c.data).startswith("student:")
         and name in collect_texts(c),
     )
     assert len(cards) == 1, f"card of {name!r} not found"
@@ -281,20 +297,45 @@ def menu_item(page, student_name, label):
 
 
 def test_class_screen_layout(make_page, repositories, sample_class):
-    """"Add student" is at the top; "Add event" is in the fixed bottom action bar."""
+    """Home: ☰ and 📄 at the top, "Add event" in the bottom bar; no student editing."""
     page = make_page()
     open_class_screen(page, repositories, sample_class)
 
     body, bottom_bar = layout(page)
-    body_text = screen_text(page).split("|")
-    assert bottom_bar is not None
     assert find_button(bottom_bar, "Add event") is not None
     assert find_button(body, "Add event") is None
-    [add_student] = find_all(body, lambda c: isinstance(c, ft.IconButton)
-                             and c.tooltip == "Add student")
-    assert isinstance(add_student, ft.OutlinedIconButton)
-    first_child = next(i for i, t in enumerate(body_text) if "Alice Martins" in t)
-    assert next(i for i, t in enumerate(body_text) if "Add student" in t) < first_child
+    assert find_all(body, lambda c: isinstance(c, ft.IconButton) and c.data == "menu")
+    assert find_all(body, lambda c: isinstance(c, ft.IconButton) and c.tooltip == "Reports")
+    assert not find_all(body, lambda c: isinstance(c, ft.PopupMenuButton))  # no ⋮ menus
+    assert "Add student" not in screen_text(page)
+
+
+@pytest.mark.parametrize(("language", "back"), [("en", "Back"), ("pt", "Voltar")])
+def test_classes_page_has_the_menu_instead_of_back(make_page, repositories, sample_class,
+                                                   language, back):
+    page = make_page()
+    app = start(page, repositories, language)
+    app.open_classes()
+
+    buttons = find_all(page.controls[-1], lambda c: isinstance(c, ft.IconButton))
+    assert not [b for b in buttons if b.icon == ft.Icons.ARROW_BACK or b.tooltip == back]
+    assert buttons[0].data == "menu"  # ☰ at the top left, like home
+    asyncio.run(buttons[0].on_click(None))
+    asyncio.run(side_menu_item(page, "home").on_click(None))
+    assert app.route == "class"
+
+
+def test_manage_class_layout(make_page, repositories, sample_class):
+    """Classes page → a class: "Add student" in the bottom bar, ⋮ on each child."""
+    page = make_page()
+    manage_class_screen(page, repositories, sample_class)
+
+    body, bottom_bar = layout(page)
+    assert find_button(bottom_bar, "Add student") is not None
+    assert len(find_all(body, lambda c: isinstance(c, ft.PopupMenuButton))) == 5
+    assert "Add event" not in screen_text(page) and "Reports" not in screen_text(page)
+    find_all(body, lambda c: isinstance(c, ft.IconButton))[0].on_click(None)  # ←
+    assert "Your classes" in screen_text(page)
 
 
 @pytest.mark.parametrize(
@@ -308,6 +349,28 @@ def test_class_screen_empty_state(make_page, repositories, language, title):
 
     assert title in screen_text(page)
     assert layout(page)[1] is None  # no "Add event" without children
+
+
+def empty_cards(page):
+    """Empty-state cards: a Row whose only child is an expanded card."""
+    return find_all(page.controls[-1], lambda c: isinstance(c, ft.Row) and len(c.controls) == 1
+                    and isinstance(c.controls[0], ft.Container) and c.controls[0].expand
+                    and c.controls[0].border_radius == 18)
+
+
+def test_empty_cards_use_the_full_width(make_page, repositories):
+    page = make_page()
+    app = start(page, repositories, "en")
+    [card] = empty_cards(page)  # home: no class at all
+    assert "No class yet" in collect_texts(card)
+
+    app.open_classes()
+    [card] = empty_cards(page)  # classes page: no classes
+    assert "No classes yet" in collect_texts(card)
+
+    app.manage_class(repositories.classes.add("Empty class"))
+    [card] = empty_cards(page)  # a class with no students
+    assert "No students yet" in collect_texts(card)
 
 
 def test_class_screen_lists_active_students_alphabetically(make_page, repositories, sample_class):
@@ -338,11 +401,11 @@ def test_class_screen_shows_each_childs_event_count(make_page, repositories, sam
     assert "1 event" in collect_texts(student_card(page, "Bento Oliveira"))
 
 
-def test_add_student_from_the_top_button(make_page, repositories, sample_class):
+def test_add_student_from_the_bottom_button(make_page, repositories, sample_class):
     page = make_page()
-    open_class_screen(page, repositories, sample_class)
+    manage_class_screen(page, repositories, sample_class)
 
-    icon_button(page, "Add student").on_click(None)
+    find_button(layout(page)[1], "Add student").on_click(None)
     name_field, birth_field, save_button, _ = student_form_parts(page)
     assert page.dialog.title.value == "New student"
     name_field.value = "Maya  Rocha"
@@ -363,7 +426,7 @@ def test_add_student_from_the_top_button(make_page, repositories, sample_class):
 )
 def test_add_student_requires_a_name(make_page, repositories, sample_class, language, message):
     page = make_page()
-    app = open_class_screen(page, repositories, sample_class, language)
+    app = manage_class_screen(page, repositories, sample_class, language)
 
     app.show_add_student_dialog()
     name_field, _, save_button, _ = student_form_parts(page)
@@ -375,7 +438,7 @@ def test_add_student_requires_a_name(make_page, repositories, sample_class, lang
 
 def test_birth_date_in_the_future_is_rejected(make_page, repositories, sample_class):
     page = make_page()
-    app = open_class_screen(page, repositories, sample_class)
+    app = manage_class_screen(page, repositories, sample_class)
     app.show_add_student_dialog()
     name_field, birth_field, save_button, _ = student_form_parts(page)
 
@@ -390,7 +453,7 @@ def test_birth_date_in_the_future_is_rejected(make_page, repositories, sample_cl
 
 def test_edit_student_updates_name_and_birth_date(make_page, repositories, sample_class):
     page = make_page()
-    open_class_screen(page, repositories, sample_class)
+    manage_class_screen(page, repositories, sample_class)
 
     menu_item(page, "Bento Oliveira", "Edit").on_click(None)
     name_field, birth_field, save_button, _ = student_form_parts(page)
@@ -407,7 +470,7 @@ def test_edit_student_updates_name_and_birth_date(make_page, repositories, sampl
 def test_edit_can_clear_the_birth_date(make_page, repositories, sample_class):
     zoe = repositories.students.add(sample_class["id"], "Zoe Prado", date(2021, 1, 1))
     page = make_page()
-    open_class_screen(page, repositories, sample_class)
+    manage_class_screen(page, repositories, sample_class)
 
     menu_item(page, "Zoe Prado", "Edit").on_click(None)
     _, birth_field, save_button, _ = student_form_parts(page)
@@ -439,7 +502,7 @@ def test_removed_student_stays_on_the_class_screen_as_transferred(
     make_page, repositories, sample_class, language, remove, group, transferred_on, reactivate
 ):
     page = make_page()
-    app = open_class_screen(page, repositories, sample_class, language)
+    app = manage_class_screen(page, repositories, sample_class, language)
     clara = by_name(repositories, sample_class["id"], "Clara Souza")
 
     menu_item(page, "Clara Souza", remove).on_click(None)
@@ -480,7 +543,7 @@ def test_reactivate_a_transferred_student(make_page, repositories, sample_class,
     clara = by_name(repositories, sample_class["id"], "Clara Souza")
     repositories.students.deactivate(clara["id"])
     page = make_page()
-    open_class_screen(page, repositories, sample_class, language)
+    manage_class_screen(page, repositories, sample_class, language)
 
     label = "Reactivate" if language == "en" else "Reativar"
     find_button(transferred_card(page, "Clara Souza"), label).on_click(None)
@@ -488,7 +551,7 @@ def test_reactivate_a_transferred_student(make_page, repositories, sample_class,
     assert repositories.students.get(clara["id"])["active"] is True
     assert student_card(page, "Clara Souza") is not None  # back in the active list
     assert "Transferred" not in screen_text(page) and "transferidos" not in screen_text(page)
-    assert " ".join(collect_texts(page.dialog.content)) == message
+    assert notice_text(page) == message
 
 
 def test_reactivate_failure_shows_an_error_message(
@@ -496,15 +559,14 @@ def test_reactivate_failure_shows_an_error_message(
 ):
     repositories.students.deactivate(by_name(repositories, sample_class["id"], "Clara Souza")["id"])
     page = make_page()
-    open_class_screen(page, repositories, sample_class)
+    manage_class_screen(page, repositories, sample_class)
     reactivate = find_button(transferred_card(page, "Clara Souza"), "Reactivate")
     database.close()  # storage failure
 
     reactivate.on_click(None)
 
-    message = page.dialog
-    assert isinstance(message, ft.SnackBar) and message.bgcolor == ft.Colors.ERROR
-    assert "Couldn't reactivate the student. Please try again." in collect_texts(message.content)
+    assert notice_is_error(page)
+    assert notice_text(page) == "Couldn't reactivate the student. Please try again."
 
 
 def test_class_with_only_transferred_students(make_page, repositories):
@@ -513,17 +575,17 @@ def test_class_with_only_transferred_students(make_page, repositories):
     repositories.students.deactivate(gael["id"])
     page = make_page()
 
-    open_class_screen(page, repositories, class_data)
+    manage_class_screen(page, repositories, class_data)
 
     text = screen_text(page)
     assert "No students yet" in text
     assert "Transferred students (1)" in text
-    assert layout(page)[1] is None  # no "Add event" without active children
+    assert find_button(layout(page)[1], "Add student") is not None
 
 
 def test_remove_student_cancel_keeps_the_student(make_page, repositories, sample_class):
     page = make_page()
-    open_class_screen(page, repositories, sample_class)
+    manage_class_screen(page, repositories, sample_class)
 
     menu_item(page, "Davi Santos", "Remove from class").on_click(None)
     page.dialog.actions[0].on_click(None)  # cancel
@@ -535,7 +597,7 @@ def test_remove_student_shows_an_error_when_it_fails(
     make_page, repositories, sample_class, database
 ):
     page = make_page()
-    open_class_screen(page, repositories, sample_class)
+    manage_class_screen(page, repositories, sample_class)
     menu_item(page, "Luna Costa", "Remove from class").on_click(None)
     database.close()  # simulate a storage failure
 
@@ -560,7 +622,7 @@ def test_tapping_a_child_opens_their_story(make_page, repositories, sample_class
     assert find_button(layout(page)[1], "Add event") is not None
 
     find_all(page.controls[-1], lambda c: isinstance(c, ft.IconButton))[0].on_click(None)  # back
-    assert "Add student" in screen_text(page)
+    assert "Add event" in screen_text(page)  # back on the class screen
 
 
 def test_story_shows_events_newest_first_with_photos_and_other_children(
@@ -717,7 +779,7 @@ def test_add_event_from_the_class_screen(make_page, repositories, sample_class):
     assert repositories.events.load_photo(event["photo_ids"][0]) == JPEG
     assert repositories.events.story(bento["id"]) == [event]
     # Back on the class screen, with the counts updated.
-    assert "Add student" in screen_text(page)
+    assert "Add event" in screen_text(page)  # back on the class screen
     assert "1 event" in collect_texts(student_card(page, "Alice Martins"))
 
 
@@ -784,13 +846,11 @@ def test_students_section_label(make_page, repositories, sample_class, language,
 
 
 def saved_message(page):
-    """Text of the information message shown after saving (or None)."""
-    message = page.dialog
-    if not isinstance(message, ft.SnackBar):
-        return None
-    icons = find_all(message.content, lambda c: isinstance(c, ft.Icon))
-    assert icons and icons[0].icon == ft.Icons.INFO_OUTLINE  # an information message
-    return " ".join(collect_texts(message.content))
+    """Text of the information message shown (at the top) after saving, or None."""
+    text = notice_text(page)
+    if text is not None:
+        assert not notice_is_error(page)  # an information message
+    return text
 
 
 @pytest.mark.parametrize(
@@ -813,7 +873,7 @@ def test_saving_an_event_shows_an_information_message(
     form.save.on_click(None)
 
     assert saved_message(page) == expected
-    assert page.dialog.duration == ft.Duration(seconds=4)  # disappears by itself
+    assert page.dialog is None  # nothing at the bottom over the buttons
     assert event_form_is_closed(page)
 
 
@@ -997,7 +1057,7 @@ def test_cancel_an_empty_event_goes_straight_back(make_page, repositories, sampl
     find_all(page.controls[-1], lambda c: isinstance(c, ft.IconButton))[0].on_click(None)
 
     assert page.dialog is None
-    assert "Add student" in screen_text(page)
+    assert "Add event" in screen_text(page)  # back on the class screen
 
 
 def test_cancel_an_event_with_content_asks_before_discarding(make_page, repositories, sample_class):
@@ -1014,7 +1074,7 @@ def test_cancel_an_event_with_content_asks_before_discarding(make_page, reposito
 
     back.on_click(None)
     page.dialog.actions[1].on_click(None)  # discard
-    assert "Add student" in screen_text(page)
+    assert "Add event" in screen_text(page)  # back on the class screen
     assert app.draft is None
     assert repositories.events.count_by_student() == {}
 
@@ -1108,8 +1168,7 @@ def test_camera_refusing_to_start_returns_to_the_form(make_page, repositories, s
     page.platform = ft.PagePlatform.ANDROID
     app = KidNotesApp(page, repositories, "en", gallery=FakeGallery(),
                       camera_factory=unsupported_camera)
-    app.open_class(sample_class)
-    app.start_event()
+    app.start_event()  # home: the class is the principal one
 
     event_form(page).take_photo.on_click(None)
 
@@ -1218,17 +1277,18 @@ def class_card(page, name):
     return cards[0]
 
 
-def test_app_reopens_the_last_chosen_class(make_page):
-    """Create a class, open it, add a student, restart and sign in: the class screen opens."""
+def test_first_class_becomes_the_principal_one_and_opens_at_start(make_page):
+    """Sign up → Classes → new class → add a student → restart: home is that class."""
     page = make_page([ft.Locale("en")])
     asyncio.run(main.main(page))
     sign_up(page)
+    find_button(page.controls[-1], "Open classes").on_click(None)
     find_button(page.controls[-1], "Add new class").on_click(None)
     name_field, save_button, _ = class_form_parts(page)
     name_field.value = "Preschool I"
     save_button.on_click(None)
     class_card(page, "Preschool I").on_click(None)
-    icon_button(page, "Add student").on_click(None)
+    find_button(layout(page)[1], "Add student").on_click(None)
     student_name, _, student_save, _ = student_form_parts(page)
     student_name.value = "Alice Martins"
     student_save.on_click(None)
@@ -1244,35 +1304,94 @@ def test_app_reopens_the_last_chosen_class(make_page):
     assert "Add event" in text
 
 
-def test_choosing_another_class_changes_the_start_screen(make_page, repositories, sample_class):
+def test_star_sets_the_principal_class(make_page, repositories, sample_class):
     other = repositories.classes.add("Preschool II")
     page = make_page()
-    app = start(page, repositories)
-    app.open_class(sample_class)
-    app.navigate("classes")
-    class_card(page, "Preschool II").on_click(None)
+    app = start(page, repositories)  # the first class is the principal one
+    app.open_classes()
+    [star] = find_all(page.controls[-1], lambda c: isinstance(c, ft.IconButton)
+                      and c.data == f"default:{other['id']}")
+    assert star.icon == ft.Icons.STAR_BORDER and star.tooltip == "Set as principal class"
+
+    star.on_click(None)
+
+    assert notice_text(page) == "Preschool II is now the principal class."
+    [star] = find_all(page.controls[-1], lambda c: isinstance(c, ft.IconButton)
+                      and c.data == f"default:{other['id']}")
+    assert star.icon == ft.Icons.STAR and star.on_click is None  # already principal
+    assert "Principal" in collect_texts(class_card(page, "Preschool II"))
+    app.go_home()
+    assert "Preschool II" in screen_text(page)
 
     restarted = make_page()
     start(restarted, repositories)
-
-    assert other["name"] in screen_text(restarted)
-    assert "Add student" in screen_text(restarted)
+    assert "Preschool II" in screen_text(restarted)
 
 
-def test_app_starts_on_home_when_no_class_was_chosen(make_page, repositories, sample_class):
+def test_tapping_a_child_on_the_manage_screen_edits_them(make_page, repositories,
+                                                         sample_class):
+    page = make_page()
+    app = manage_class_screen(page, repositories, sample_class)
+    student_card(page, "Bento Oliveira").on_click(None)
+    assert page.dialog.title.value == "Edit student"
+    assert app.route == "manage_class"  # not the learning story
+
+
+def test_students_added_on_the_classes_page_appear_on_home(make_page, repositories,
+                                                           sample_class):
+    other = repositories.classes.add("Preschool II")
+    page = make_page()
+    app = start(page, repositories)  # home: sample_class (the first one)
+    for class_data, name in ((sample_class, "Maya Rocha"), (other, "Theo Reis")):
+        app.manage_class(class_data)
+        find_button(layout(page)[1], "Add student").on_click(None)
+        name_field, _, save_button, _ = student_form_parts(page)
+        name_field.value = name
+        save_button.on_click(None)
+        assert name in screen_text(page)
+
+    app.go_home()
+    text = screen_text(page)
+    assert "Maya Rocha" in text and "Theo Reis" not in text  # only the principal class
+
+
+def test_set_principal_from_the_manage_screen(make_page, repositories, sample_class):
+    other = repositories.classes.add("Preschool II")
+    page = make_page()
+    app = manage_class_screen(page, repositories, other)
+    [star] = find_all(page.controls[-1], lambda c: getattr(c, "data", None) == "set-default")
+    star.on_click(None)
+    assert repositories.settings.get_default_class_id() == other["id"]
+    assert app.selected_class["id"] == other["id"]
+
+
+def test_without_a_principal_class_the_first_one_is_used(make_page, repositories, sample_class):
     page = make_page()
     start(page, repositories)
 
-    assert "Your classes" in screen_text(page)
+    assert sample_class["name"] in screen_text(page) and "Add event" in screen_text(page)
+    assert repositories.settings.get_default_class_id() == sample_class["id"]  # saved
 
 
-def test_app_starts_on_home_when_the_last_class_no_longer_exists(make_page, repositories):
-    repositories.settings.set_last_class_id("deleted-class-id")
+def test_the_last_class_of_older_versions_becomes_the_principal_one(make_page, repositories,
+                                                                    sample_class):
+    other = repositories.classes.add("Preschool II")
+    repositories.settings.set_last_class_id(other["id"])  # saved by an older version
     page = make_page()
-
     start(page, repositories)
+    assert "Preschool II" in screen_text(page)
 
-    assert "Your classes" in screen_text(page)
+
+def test_principal_class_that_no_longer_exists(make_page, repositories):
+    repositories.settings.set_default_class_id("deleted-class-id")
+    page = make_page()
+    start(page, repositories)
+    assert "No class yet" in screen_text(page)  # and no class to fall back to
+
+    repositories.classes.add("Preschool II")
+    restarted = make_page()
+    start(restarted, repositories)
+    assert "Preschool II" in screen_text(restarted)
 
 
 def test_startup_shows_an_error_when_the_key_is_missing(make_page, app_storage):
@@ -1357,7 +1476,7 @@ def test_sign_in_after_registration_and_wrong_password(make_page):
     page = make_page()
     start_root(page)
     sign_up(page, "Ana@School.org ")  # normalized: trimmed, lowercase
-    assert "ana@school.org" in screen_text(page)  # the signed-in teacher on the home
+    assert "ana@school.org" in collect_texts(page.drawer)  # the signed-in teacher, in the menu
 
     restarted = make_page()
     root = start_root(restarted)
@@ -1406,11 +1525,12 @@ def test_sign_out_closes_the_teachers_data(make_page):
     sign_up(page)
     session = root.session
 
-    find_button(page.controls[-1], "Sign out").on_click(None)
+    sign_out_from_menu(page)
 
     assert root.session is None and root.app is None
+    assert page.drawer is None  # no side menu on the sign-in screen
     assert "Sign in to open your classes." in screen_text(page)
-    with pytest.raises(Exception):  # the database connection was closed
+    with pytest.raises(sqlite3.ProgrammingError):  # the database connection was closed
         session.database.get("classes", "x")
 
 
@@ -1418,18 +1538,19 @@ def test_each_teacher_only_sees_their_own_classes(make_page):
     page = make_page()
     start_root(page)
     sign_up(page, "ana@school.org")
+    find_button(page.controls[-1], "Open classes").on_click(None)
     find_button(page.controls[-1], "Add new class").on_click(None)
     name_field, save_button, _ = class_form_parts(page)
     name_field.value = "Ana's class"
     save_button.on_click(None)
-    find_button(page.controls[-1], "Sign out").on_click(None)
+    sign_out_from_menu(page)
 
     find_button(page.controls[-1], "Don't have an account? Create one").on_click(None)
     sign_up(page, "bia@school.org", "bia-password")
 
-    assert "bia@school.org" in screen_text(page)
+    assert "bia@school.org" in collect_texts(page.drawer)
     assert "Ana's class" not in screen_text(page)
-    assert "No classes yet" in screen_text(page)
+    assert "No class yet" in screen_text(page)
 
 
 # --- editing events ---------------------------------------------------------------------
@@ -1495,7 +1616,7 @@ def test_edit_an_event(make_page, repositories, sample_class):
     assert repositories.events.load_photo(event["photo_ids"][0]) is None
     assert len(old_photo_files & set(updated["photo_ids"])) == 1
     # Back on the story with a message, and no duplicate event.
-    assert " ".join(collect_texts(page.dialog.content)) == "Event updated."
+    assert notice_text(page) == "Event updated."
     assert screen_text(page).count("Built a tower with 12 blocks") == 1
     assert len(repositories.events.story(alice["id"])) == 1
 
@@ -1512,7 +1633,7 @@ def test_edit_an_event_in_portuguese(make_page, repositories, sample_class):
     assert "Editar evento | Alice Martins" in screen_text(page)
     event_form(page).save.on_click(None)
 
-    assert " ".join(collect_texts(page.dialog.content)) == "Evento atualizado."
+    assert notice_text(page) == "Evento atualizado."
 
 
 def test_edit_keeps_a_transferred_child_linked(make_page, repositories, sample_class):
@@ -1573,30 +1694,35 @@ def test_edit_validation_still_applies(make_page, repositories, sample_class):
 # --- home header / add student button ---------------------------------------------------
 
 
-def test_home_header_has_no_avatar_circle(make_page):
+def test_home_header_has_the_menu_button(make_page):
     page = make_page()
     start_root(page)
     sign_up(page, "ana@school.org")
 
     texts = collect_texts(page.controls[-1])
-    assert "ana@school.org" in texts  # the teacher is still shown
     assert "A" not in texts  # no circle with the email's first letter
-    assert find_button(page.controls[-1], "Sign out") is not None
+    assert find_button(page.controls[-1], "Sign out") is None  # moved to the side menu
+    menu = open_menu(page)
+    texts = collect_texts(menu)
+    assert "ana@school.org" in texts and "RelatórioFácil Infantil" in texts
+    assert [t for t in texts if t in ("Settings", "Sign out")] == ["Settings", "Sign out"]
 
 
-@pytest.mark.parametrize(("language", "tooltip"), [("en", "Add student"),
-                                                   ("pt", "Adicionar aluno")])
-def test_add_student_is_an_icon_only_button(make_page, repositories, sample_class,
-                                            language, tooltip):
+@pytest.mark.parametrize(("language", "label"), [("en", "Add student"),
+                                                 ("pt", "Adicionar aluno")])
+def test_students_are_added_only_on_the_classes_page(make_page, repositories, sample_class,
+                                                    language, label):
     page = make_page()
-    open_class_screen(page, repositories, sample_class, language)
+    app = open_class_screen(page, repositories, sample_class, language)
+    assert label not in screen_text(page)  # not on home
 
-    [button] = find_all(page.controls[-1], lambda c: isinstance(c, ft.IconButton)
-                        and c.tooltip == tooltip)
-    assert button.icon == ft.Icons.PERSON_ADD_ALT_1
-    assert isinstance(button, ft.OutlinedIconButton)
-    assert getattr(button, "content", None) is None  # no text, only the icon
-    assert find_button(page.controls[-1], tooltip) is None  # no button with that text
+    app.open_classes()
+    find_all(page.controls[-1], lambda c: isinstance(c, ft.Container)
+             and c.data == f"class:{sample_class['id']}")[0].on_click(None)
+    button = find_button(layout(page)[1], label)
+    assert button is not None
+    button.on_click(None)
+    assert page.dialog is not None  # the student form
 
 
 # --- extra information about the child ---------------------------------------------------
@@ -1694,7 +1820,7 @@ def test_write_extra_information(make_page, repositories, sample_class):
     assert saved == "She loves sleeping after lunch.\nShe plays football with one friend."
     # Back on the child screen, with the text and a message.
     assert "Learning story" in screen_text(page)
-    assert " ".join(collect_texts(page.dialog.content)) == "Extra information saved."
+    assert notice_text(page) == "Extra information saved."
     card = extra_info_card(page)
     assert card.visible and card.text == saved
     assert app.selected_student["notes"] == saved
@@ -1780,7 +1906,7 @@ def test_extra_information_in_portuguese(make_page, repositories, sample_class):
     write(area, "Ele adora jogar futebol com um amigo.")
     save.on_click(None)
 
-    assert " ".join(collect_texts(page.dialog.content)) == "Informações extras salvas."
+    assert notice_text(page) == "Informações extras salvas."
     assert extra_info_card(page).text == "Ele adora jogar futebol com um amigo."
 
 
@@ -1820,7 +1946,7 @@ def test_after_sign_out_the_email_stays_filled(make_page):
     start_root(page)
     sign_up(page, "bia@school.org")
 
-    find_button(page.controls[-1], "Sign out").on_click(None)
+    sign_out_from_menu(page)
 
     assert auth_fields(page)["Email"].value == "bia@school.org"
     find_button(page.controls[-1], "Don't have an account? Create one").on_click(None)
@@ -1840,11 +1966,13 @@ def test_reports_button_through_the_full_app(make_page):
     fill(fields["Senha"], "secret-pass")
     fill(fields["Confirme a senha"], "secret-pass")
     find_button(page.controls[-1], "Criar conta").on_click(None)
+    find_button(page.controls[-1], "Abrir turmas").on_click(None)
     find_button(page.controls[-1], "Adicionar nova turma").on_click(None)
     name_field, save_button, _ = class_form_parts(page)
     name_field.value = "Maternal I"
     save_button.on_click(None)
-    class_card(page, "Maternal I").on_click(None)
+    open_menu(page)  # no back button on Classes: home is in the side menu
+    asyncio.run(side_menu_item(page, "home").on_click(None))
 
     icon_button(page, "Relatórios").on_click(None)
 
@@ -1862,3 +1990,64 @@ def test_every_repository_used_by_the_app_exists():
                           .read_text(encoding="utf-8")))
     fields = set(Repositories.__dataclass_fields__)
     assert used and used <= fields, f"missing in Repositories: {used - fields}"
+
+
+# --- information messages at the top; the page keeps its scroll position -----------------
+
+
+def test_messages_are_shown_at_the_top_over_the_page(make_page, repositories, sample_class):
+    from components import NOTICE_SECONDS, TopNotice
+
+    page = make_page()
+    notice = TopNotice(page)
+
+    notice.show("Saved.")
+
+    [shown] = page.overlay  # over the page, not in the bottom bar area
+    assert (shown.top, shown.left, shown.right, shown.bottom) == (0, 0, 0, None)
+    assert isinstance(shown.content, ft.SafeArea)  # below the phone's status bar
+    assert notice_text(page) == "Saved." and not notice_is_error(page)
+    assert page.dialog is None and NOTICE_SECONDS == 4
+
+    notice.show("Failed.", error=True)  # a new message replaces the previous one
+    assert len(page.overlay) == 1 and notice_text(page) == "Failed." and notice_is_error(page)
+
+    close = find_all(page.overlay[0], lambda c: isinstance(c, ft.IconButton))[0]
+    close.on_click(None)
+    assert page.overlay == []
+
+
+def test_messages_hide_by_themselves(make_page, monkeypatch):
+    import components
+    from components import TopNotice
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(components.asyncio, "sleep", no_wait)
+    page = make_page()
+    notice = TopNotice(page)
+    notice.show("First.")
+    first_hide = page.tasks[-1]
+    notice.show("Second.")
+
+    asyncio.run(first_hide[0](*first_hide[1]))  # the old timer must not hide the new message
+    assert notice_text(page) == "Second."
+    handler, args = page.tasks[-1]
+    asyncio.run(handler(*args))
+    assert page.overlay == []
+
+
+def test_same_screen_keeps_its_scroll_position(make_page, repositories, sample_class):
+    page = make_page()
+    app = open_class_screen(page, repositories, sample_class)
+    body = layout(page)[0]
+    assert body.scroll is not None  # the scrollable part of the screen
+
+    app.render()  # e.g. after saving or deleting something on this screen
+    assert layout(page)[0] is body  # same scrollable: Flutter keeps the position
+    assert "Alice Martins" in screen_text(page)  # with the new content
+
+    app.open_child(by_name(repositories, sample_class["id"], "Alice Martins"))
+    assert layout(page)[0] is not body  # another screen starts at the top
+

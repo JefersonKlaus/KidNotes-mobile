@@ -1,10 +1,10 @@
-"""Minimal PDF writer for text reports (pure Python, no dependencies).
+"""Minimal PDF writer for the reports (pure Python, no dependencies).
 
 Why not a PDF library: fpdf2/reportlab need Pillow (native code), an extra
-binary package for Android/iOS. A report is only text, so this small writer is
-enough: A4 pages, standard Helvetica fonts (WinAnsi encoding: all Portuguese
-accents), word wrap with the real font metrics, automatic page breaks and a
-"Page X of Y" footer.
+binary package for Android/iOS. A report is text and a few photos, so this
+small writer is enough: A4 pages, standard Helvetica fonts (WinAnsi encoding:
+all Portuguese accents), word wrap with the real font metrics, automatic page
+breaks, a "Page X of Y" footer, and JPEG/PNG photos (see `reports/images.py`).
 """
 
 import unicodedata
@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from reports.font_metrics import HELVETICA, HELVETICA_BOLD
+from reports.images import PdfImage, placement_matrix
 
 PAGE_WIDTH = 595.28  # A4, in points
 PAGE_HEIGHT = 841.89
@@ -80,6 +81,7 @@ class PdfDocument:
     footer: str = ""  # left part of the footer; "{page}" / "{pages}" are filled in
     pages: list[list[bytes]] = field(default_factory=list)
     y: float = 0.0
+    images: list[PdfImage] = field(default_factory=list)  # /Im1, /Im2...
 
     def __post_init__(self) -> None:
         self.new_page()
@@ -93,6 +95,26 @@ class PdfDocument:
     def _ensure_space(self, height: float) -> None:
         if self.y - height < MARGIN + 20:  # keep clear of the footer
             self.new_page()
+
+    def ensure_space(self, height: float) -> None:
+        """Start a new page unless `height` points still fit on this one."""
+        self._ensure_space(height)
+
+    def draw_text(self, x: float, y: float, text: str, size: float = 9,
+                  bold: bool = False, color=MUTED) -> None:
+        """One line of text at (x, y) (no wrapping), e.g. a photo caption."""
+        self._draw(x, y, text, size, bold, color)
+
+    def draw_image(self, image: PdfImage, x: float, y: float, width: float,
+                   height: float) -> None:
+        """The image upright in the box whose bottom-left corner is (x, y)."""
+        if image not in self.images:  # identity (PdfImage has eq=False)
+            self.images.append(image)
+        name = b"/Im%d" % (self.images.index(image) + 1)
+        matrix = placement_matrix(image.orientation, x, y, width, height)
+        self.pages[-1].append(
+            b"q %.4f %.4f %.4f %.4f %.2f %.2f cm %s Do Q" % (*matrix, name)
+        )
 
     def _draw(self, x: float, y: float, text: str, size: float, bold: bool, color) -> None:
         font = b"/F2" if bold else b"/F1"
@@ -110,10 +132,18 @@ class PdfDocument:
         color=INK,
         leading: float | None = None,
         space_after: float = 0,
+        keep_with_next: float = 0,
     ) -> None:
-        """A paragraph, wrapped to the page width; continues on a new page if needed."""
+        """A paragraph, wrapped to the page width; continues on a new page if needed.
+
+        `keep_with_next`: room (points) that must fit after it on the same page,
+        so a title is never left alone at the bottom of a page.
+        """
         leading = leading or size * 1.45
-        for line in wrap(text, size, CONTENT_WIDTH, bold) or [""]:
+        lines = wrap(text, size, CONTENT_WIDTH, bold) or [""]
+        if keep_with_next:
+            self._ensure_space(leading * len(lines) + space_after + keep_with_next)
+        for line in lines:
             self._ensure_space(leading)
             self.y -= leading
             self._draw(MARGIN, self.y, line, size, bold, color)
@@ -163,6 +193,13 @@ class PdfDocument:
             b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold "
             b"/Encoding /WinAnsiEncoding >>"
         )
+        xobjects = []
+        for number, image in enumerate(self.images, start=1):
+            xobjects.append(b"/Im%d %d 0 R" % (number, add(_image_object(image, add))))
+        resources = add(
+            b"<< /Font << /F1 %d 0 R /F2 %d 0 R >> /XObject << %s >> >>"
+            % (font_regular, font_bold, b" ".join(xobjects))
+        )
         page_ids = []
         for number, commands in enumerate(self.pages, start=1):
             footer = self.footer.format(page=number, pages=total)
@@ -178,8 +215,8 @@ class PdfDocument:
             page_ids.append(
                 add(
                     b"<< /Type /Page /Parent %d 0 R /MediaBox [0 0 %.2f %.2f] "
-                    b"/Resources << /Font << /F1 %d 0 R /F2 %d 0 R >> >> /Contents %d 0 R >>"
-                    % (pages_obj, PAGE_WIDTH, PAGE_HEIGHT, font_regular, font_bold, content)
+                    b"/Resources %d 0 R /Contents %d 0 R >>"
+                    % (pages_obj, PAGE_WIDTH, PAGE_HEIGHT, resources, content)
                 )
             )
         objects[catalog - 1] = b"<< /Type /Catalog /Pages %d 0 R >>" % pages_obj
@@ -207,3 +244,22 @@ class PdfDocument:
             % (len(objects) + 1, catalog, info, xref)
         )
         return bytes(out)
+
+
+def _image_object(image: PdfImage, add) -> bytes:
+    """The image XObject (its soft mask, if any, is added as another object)."""
+    entries = [
+        b"/Type /XObject /Subtype /Image /Width %d /Height %d" % (image.width, image.height),
+        b"/ColorSpace " + image.color_space,
+        b"/BitsPerComponent %d" % image.bits,
+        b"/Filter " + image.filter,
+        b"/Length %d" % len(image.data),
+    ]
+    if image.decode_parms:
+        entries.append(b"/DecodeParms " + image.decode_parms)
+    if image.decode:
+        entries.append(b"/Decode " + image.decode)
+    if image.smask is not None:
+        entries.append(b"/SMask %d 0 R" % add(_image_object(image.smask, add)))
+    return b"<< " + b" ".join(entries) + b" >>\nstream\n" + image.data + b"\nendstream"
+

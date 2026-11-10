@@ -10,7 +10,7 @@ from typing import Any
 
 import flet as ft
 
-from components import safe_update
+from components import field_border, safe_update
 from database import AccountError, AccountStore
 from database.accounts import PASSWORD_MIN_LENGTH
 from i18n import Translator
@@ -49,9 +49,7 @@ class AuthScreen:
     def _field(self, label: str, **kwargs: Any) -> ft.TextField:
         return ft.TextField(
             label=self.tr.t(label),
-            border_radius=14,
-            border_color=COLORS["border"],
-            focused_border_color=COLORS["primary"],
+            border=field_border(focused_color=COLORS["primary"]),
             bgcolor=COLORS["surface"],
             autocorrect=False,
             enable_suggestions=False,

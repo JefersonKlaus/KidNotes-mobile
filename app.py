@@ -4,9 +4,13 @@
   the teacher is signed in, opens their own encrypted data in `KidNotesApp`.
   Signing out closes that data and goes back to the sign-in screen.
 - `KidNotesApp`: session state and navigation between screens. Routes:
-  "classes" (home) → "class" (children + "Add event") → "child" (learning
-  story) → "extra_info" (notes about the child). "event_form" and "camera"
-  create or edit an event.
+  "class" (HOME: the principal class; children + "Add event") → "child"
+  (learning story) → "extra_info" (notes about the child). "event_form" and
+  "camera" create or edit an event. "reports" → "report_review" (edit a
+  report) → "report_photos" (choose the images of the report).
+  Side menu (☰ on home, or a swipe from the left edge): Home, "classes" (all
+  classes: ★ sets the principal one) → "manage_class" (add/edit/remove
+  students), "settings" (account, Groq API key), Sign out.
 """
 
 import logging
@@ -16,23 +20,28 @@ from typing import Any
 
 import flet as ft
 
-from components import info_message
+from components import TopNotice
 from database import AccountStore, Repositories, Session
+from database.reports import MAX_REPORT_PHOTOS
 from i18n import DEFAULT_LANGUAGE, FLUTTER_LOCALES, Translator, resolve_language
 from media import GalleryPicker, camera_supported
 from reports.ai import GroqClient, ReportAIError
 from reports.document import build_report_pdf, report_filename
 from reports.export import ReportExporter
 from reports.generate import events_in_period, write_report
+from reports.images import pdf_compatible
 from screens.auth import LOGIN, AuthScreen
 from screens.camera import CameraScreen, default_camera_factory
 from screens.child import STORY_PAGE_SIZE, ChildScreen
 from screens.class_form import NewClassForm
-from screens.class_screen import ClassScreen, RemoveStudentDialog
-from screens.dashboard import DashboardScreen
+from screens.class_screen import MANAGE, ClassScreen, NoClassScreen, RemoveStudentDialog
+from screens.classes import ClassesScreen
 from screens.event_form import DiscardEventDialog, DraftPhoto, EventDraft, EventFormScreen
 from screens.extra_info import ExtraInfoScreen
-from screens.reports import ReportRequest, ReportReviewScreen, ReportScreen
+from screens.menu import build_menu
+from screens.report_photos import ReportPhotosScreen
+from screens.reports import DeleteReportDialog, ReportRequest, ReportReviewScreen, ReportScreen
+from screens.settings import SettingsScreen
 from screens.student_form import StudentForm
 from theme import COLORS
 
@@ -52,13 +61,31 @@ def setup_page(page: ft.Page, tr: Translator) -> None:
     )
 
 
-def show_screen(page: ft.Page, screen: Any) -> None:
-    """Put a screen on the page: scrollable body + optional fixed bottom bar."""
+SCREEN_ROOT = "screen-root"  # `data` of the layout that show_screen puts on the page
+
+
+def show_screen(page: ft.Page, screen: Any, keep_scroll: bool = False) -> None:
+    """Put a screen on the page: scrollable body + optional fixed bottom bar.
+
+    `keep_scroll`: the same screen is shown again (after deleting, saving...).
+    Its scrollable body is reused and only its content is replaced, so the
+    page stays where the teacher was. A new body (a new screen) starts at the top.
+    """
     content = screen.build()
     bottom_bar = screen.bottom_bar() if hasattr(screen, "bottom_bar") else None
+    scrollable = getattr(screen, "scrollable", True)
+    root = page.controls[-1] if page.controls else None
+    if keep_scroll and scrollable and getattr(root, "data", None) == SCREEN_ROOT:
+        column = root.content
+        body = column.controls[0]
+        if isinstance(body, ft.Column) and body.scroll is not None:
+            body.controls = [content]
+            column.controls = [body, *([bottom_bar] if bottom_bar else [])]
+            page.update()
+            return
     body: ft.Control = (
         ft.Column(controls=[content], expand=True, scroll=ft.ScrollMode.AUTO, spacing=0)
-        if getattr(screen, "scrollable", True)
+        if scrollable
         else ft.Container(content=content, expand=True)
     )
     page.controls.clear()
@@ -70,6 +97,7 @@ def show_screen(page: ft.Page, screen: Any) -> None:
                 spacing=0,
             ),
             expand=True,
+            data=SCREEN_ROOT,
         )
     )
     page.update()
@@ -105,6 +133,7 @@ class AppRoot:
         self.auth_mode = mode
         tr = Translator(self.language)
         setup_page(self.page, tr)
+        self.page.drawer = None  # the side menu is only for the signed-in app
         self.page.on_locale_change = self._on_locale_change
         screen = AuthScreen(
             self.accounts,
@@ -168,26 +197,34 @@ class KidNotesApp:
         self.report_request: ReportRequest | None = None
         self.review_report_id: str | None = None
         self.review_draft: str | None = None
+        self.photo_selection: list[str] = []  # on the "choose images" screen
         self.camera_factory = camera_factory
         self.account_email = account_email
         self.on_sign_out = on_sign_out
-        self.route = "classes"
-        self.selected_class: dict[str, Any] | None = None
+        self.route = "class"  # home: the principal class
+        self.selected_class: dict[str, Any] | None = None  # the principal class (home)
+        self.managed_class: dict[str, Any] | None = None  # opened on the Classes page
         self.selected_student: dict[str, Any] | None = None
         self.story_limit = STORY_PAGE_SIZE
         self.draft: EventDraft | None = None
         self.notes_draft: str | None = None  # text on the extra information screen
+        self.notice = TopNotice(page)  # messages at the top ("Report deleted.")
+        self.editing_groq_key = False  # Settings: the key field is open
+        self.settings_back_route = "class"  # where Settings' ← goes
+        self._rendered_route: str | None = None
 
         setup_page(page, self.tr)
         page.on_route_change = self._on_route_change
         page.on_locale_change = self._on_locale_change
-        self._restore_last_class()
+        self._install_menu()
+        self._load_principal_class()
         self.render()
 
     # --- language ----------------------------------------------------------------
 
     def _apply_locale(self) -> None:
         setup_page(self.page, self.tr)
+        self._install_menu()  # its texts change language too
 
     def _on_locale_change(self, event: ft.LocaleChangeEvent) -> None:
         """Device language changed while the app was open."""
@@ -202,11 +239,24 @@ class KidNotesApp:
 
     def render(self) -> None:
         screen = self._current_screen()
-        show_screen(self.page, screen)
+        # Same screen again (after deleting, saving...): keep the scroll position.
+        same_screen = self.route == self._rendered_route
+        self._rendered_route = self.route
+        show_screen(self.page, screen, keep_scroll=same_screen)
         if isinstance(screen, CameraScreen):
             self.page.run_task(screen.start)  # the camera must be on the page first
 
+    def notify(self, text: str, error: bool = False) -> None:
+        """Information message at the top of the screen."""
+        self.notice.show(text, error=error)
+
     def _current_screen(self) -> Any:
+        if self.route == "settings":
+            return self._settings_screen()
+        if self.route == "report_photos" and self.review_report_id:
+            screen = self._report_photos_screen()
+            if screen is not None:
+                return screen
         if self.route == "report_review" and self.review_report_id:
             screen = self._report_review_screen()
             if screen is not None:
@@ -246,34 +296,58 @@ class KidNotesApp:
             )
         if self.route == "child" and self.selected_student and self.selected_class:
             return self._child_screen()
-        if self.route == "class" and self.selected_class:
-            return ClassScreen(
-                self.selected_class,
-                self.repos.students.list_active(self.selected_class["id"]),
-                self.repos.students.list_inactive(self.selected_class["id"]),
-                self.repos.events.count_by_student(),
-                on_back=lambda: self.navigate("classes"),
-                on_open_child=self.open_child,
-                on_add_student=self.show_add_student_dialog,
-                on_edit_student=self.show_edit_student_dialog,
-                on_remove_student=self.show_remove_student_dialog,
-                on_reactivate_student=self.reactivate_student,
-                on_add_event=lambda: self.start_event(),
-                tr=self.tr,
-                on_open_reports=self.open_reports,
-            )
+        if self.route == "classes":
+            return self._classes_screen()
+        if self.route == "manage_class" and self.managed_class:
+            return self._manage_class_screen()
+        if self.selected_class is None:
+            return NoClassScreen(self.tr, on_open_menu=self.open_menu,
+                                 on_open_classes=self.open_classes)
+        return ClassScreen(  # home: the principal class
+            self.selected_class,
+            self.repos.students.list_active(self.selected_class["id"]),
+            [],
+            self.repos.events.count_by_student(),
+            self.tr,
+            on_open_menu=self.open_menu,
+            on_open_child=self.open_child,
+            on_add_event=lambda: self.start_event(),
+            on_open_reports=self.open_reports,
+        )
+
+    def _classes_screen(self) -> ClassesScreen:
         counts = self.repos.students.count_active_by_class()
         classes = [
             {**class_data, "student_count": counts.get(class_data["id"], 0)}
             for class_data in self.repos.classes.list_all()
         ]
-        return DashboardScreen(
-            self.account_email,
+        return ClassesScreen(
             classes,
-            on_class_selected=self.open_class,
+            self.selected_class["id"] if self.selected_class else None,
+            self.tr,
+            on_open_menu=self.open_menu,
+            on_manage_class=self.manage_class,
+            on_set_default=self.set_default_class,
             on_add_class=self.show_add_class_dialog,
-            tr=self.tr,
-            on_sign_out=self.on_sign_out,
+        )
+
+    def _manage_class_screen(self) -> ClassScreen:
+        assert self.managed_class is not None
+        class_id = self.managed_class["id"]
+        return ClassScreen(
+            self.managed_class,
+            self.repos.students.list_active(class_id),
+            self.repos.students.list_inactive(class_id),
+            self.repos.events.count_by_student(),
+            self.tr,
+            mode=MANAGE,
+            on_back=lambda: self.navigate("classes"),
+            on_add_student=self.show_add_student_dialog,
+            on_edit_student=self.show_edit_student_dialog,
+            on_remove_student=self.show_remove_student_dialog,
+            on_reactivate_student=self.reactivate_student,
+            is_default=bool(self.selected_class and self.selected_class["id"] == class_id),
+            on_set_default=lambda: self.set_default_class(self.managed_class),
         )
 
     def _child_screen(self) -> ChildScreen:
@@ -302,13 +376,16 @@ class KidNotesApp:
 
     # --- navigation -------------------------------------------------------------
 
-    def _restore_last_class(self) -> None:
-        """Start on the class the teacher chose last time (if it still exists)."""
-        class_id = self.repos.settings.get_last_class_id()
-        last_class = self.repos.classes.get(class_id) if class_id else None
-        if last_class:
-            self.selected_class = last_class
-            self.route = "class"
+    def _load_principal_class(self) -> None:
+        """Home shows the principal class; without one, the first class becomes it."""
+        class_id = self.repos.settings.get_default_class_id()
+        principal = self.repos.classes.get(class_id) if class_id else None
+        if principal is None:
+            classes = self.repos.classes.list_all()
+            principal = classes[0] if classes else None
+            if principal is not None:
+                self._save_principal(principal)
+        self.selected_class = principal
 
     def navigate(self, route: str) -> None:
         self.route = route
@@ -317,13 +394,29 @@ class KidNotesApp:
     def _on_route_change(self, _: ft.RouteChangeEvent) -> None:
         self.render()
 
-    def open_class(self, class_data: dict[str, Any]) -> None:
-        self.selected_class = class_data
-        try:
-            self.repos.settings.set_last_class_id(class_data["id"])
-        except Exception:  # remembering the class must never block navigation
-            logger.exception("Could not save the last opened class.")
+    def go_home(self) -> None:
         self.navigate("class")
+
+    def open_classes(self) -> None:
+        self.navigate("classes")
+
+    def manage_class(self, class_data: dict[str, Any]) -> None:
+        """Classes page → a class: add, edit and remove its students."""
+        self.managed_class = class_data
+        self.navigate("manage_class")
+
+    def set_default_class(self, class_data: dict[str, Any]) -> None:
+        """★: the app opens on this class from now on (home)."""
+        self._save_principal(class_data)
+        self.selected_class = class_data
+        self.render()
+        self.notify(self.tr.t("classes.default_set", name=class_data["name"]))
+
+    def _save_principal(self, class_data: dict[str, Any]) -> None:
+        try:
+            self.repos.settings.set_default_class_id(class_data["id"])
+        except Exception:  # never block the app because of it
+            logger.exception("Could not save the principal class.")
 
     def open_child(self, student: dict[str, Any]) -> None:
         self.selected_student = student
@@ -365,7 +458,7 @@ class KidNotesApp:
     def _on_extra_info_saved(self, student: dict[str, Any]) -> None:
         self.selected_student = student  # the child screen shows the new text
         self._leave_extra_info()
-        self.page.show_dialog(info_message(self.tr.t("child.extra_info_saved")))
+        self.notify(self.tr.t("child.extra_info_saved"))
 
     def show_more_story(self) -> None:
         self.story_limit += STORY_PAGE_SIZE
@@ -382,9 +475,12 @@ class KidNotesApp:
         )
         self.page.show_dialog(form.build())
 
-    def _on_class_saved(self, _: dict[str, Any]) -> None:
+    def _on_class_saved(self, class_data: dict[str, Any]) -> None:
         self.page.pop_dialog()
-        self.render()  # the home list is read again from the database
+        if self.selected_class is None:  # the first class becomes the principal one
+            self._save_principal(class_data)
+            self.selected_class = class_data
+        self.render()  # the class list is read again from the database
 
     # --- students of the selected class ----------------------------------------
 
@@ -395,12 +491,12 @@ class KidNotesApp:
         self._show_student_form(student)
 
     def _show_student_form(self, student: dict[str, Any] | None) -> None:
-        assert self.selected_class is not None
+        assert self.managed_class is not None
         form = StudentForm(
             self.repos.students,
             self.tr,
             self.page,
-            class_id=self.selected_class["id"],
+            class_id=self.managed_class["id"],
             student=student,
             on_saved=self._on_students_changed,
             on_cancel=self.page.pop_dialog,
@@ -423,14 +519,10 @@ class KidNotesApp:
             self.repos.students.reactivate(student["id"])
         except Exception:
             logger.exception("Could not reactivate the student.")
-            self.page.show_dialog(
-                info_message(self.tr.t("students.reactivate_error"), error=True)
-            )
+            self.notify(self.tr.t("students.reactivate_error"), error=True)
             return
         self.render()
-        self.page.show_dialog(
-            info_message(self.tr.t("students.reactivated", name=student["name"]))
-        )
+        self.notify(self.tr.t("students.reactivated", name=student["name"]))
 
     def _on_students_changed(self, _: dict[str, Any]) -> None:
         self.page.pop_dialog()
@@ -553,7 +645,7 @@ class KidNotesApp:
         edited = self.draft is not None and self.draft.is_edit
         self._close_event_form()
         message = self.tr.t("event_updated") if edited else self._saved_message(event)
-        self.page.show_dialog(info_message(message))
+        self.notify(message)
 
     def _saved_message(self, event: dict[str, Any]) -> str:
         """"Event saved to Clara's learning story." / "... of 3 students."."""
@@ -575,6 +667,12 @@ class KidNotesApp:
         """The teacher's key (saved encrypted); GROQ_API_KEY helps during development."""
         return self.repos.settings.get_groq_api_key() or os.environ.get("GROQ_API_KEY") or None
 
+    def _groq_key_source(self) -> str:
+        """Where the key comes from (for the log; never the key itself)."""
+        if self.repos.settings.get_groq_api_key():
+            return "the key saved in the app"
+        return "GROQ_API_KEY (.env / terminal)" if os.environ.get("GROQ_API_KEY") else "nowhere"
+
     def _all_student_names(self, class_id: str) -> dict[str, str]:
         students = self.repos.students.list_active(class_id) + self.repos.students.list_inactive(
             class_id
@@ -584,7 +682,10 @@ class KidNotesApp:
     def open_reports(self) -> None:
         assert self.selected_class is not None
         if self.report_request is None or self.report_request.class_id != self.selected_class["id"]:
-            self.report_request = ReportRequest(class_id=self.selected_class["id"])
+            self.report_request = ReportRequest(
+                class_id=self.selected_class["id"],
+                instructions=self.repos.settings.get_report_instructions(),
+            )
         self.navigate("reports")
 
     def _report_screen(self) -> ReportScreen:
@@ -609,10 +710,48 @@ class KidNotesApp:
             on_back=lambda: self.navigate("class"),
             on_period_change=self.set_report_period,
             on_generate=self.generate_reports,
-            on_save_key=self.save_groq_key,
-            on_change_key=self.change_groq_key,
+            on_open_settings=self.open_settings,
             on_open_report=self.open_report,
+            on_save_instructions=self.save_report_instructions,
+            on_delete_report=self.show_delete_report_dialog,
         )
+
+    def show_delete_report_dialog(self, report: dict[str, Any]) -> None:
+        student = self.repos.students.get(report["student_id"])
+        dialog = DeleteReportDialog(
+            self.repos.reports,
+            self.tr,
+            report,
+            student["name"] if student else "?",
+            on_deleted=self._on_report_deleted,
+            on_cancel=self.page.pop_dialog,
+        )
+        self.page.show_dialog(dialog.build())
+
+    def _on_report_deleted(self, report: dict[str, Any]) -> None:
+        self.page.pop_dialog()
+        logger.info("Report %s deleted.", report["id"])
+        request = self.report_request
+        if request is not None:
+            # A "Report ready → Open" line pointing to it would open nothing.
+            request.statuses = {
+                sid: status for sid, status in request.statuses.items()
+                if status != ("done", report["id"])
+            }
+        if self.review_report_id == report["id"]:
+            self.review_report_id = None
+            self.review_draft = None
+        self.render()
+        self.notify(self.tr.t("delete_report.done"))
+
+    def save_report_instructions(self, text: str) -> None:
+        """Kept (encrypted) for the next reports, in every class of this account."""
+        if text.strip() == self.repos.settings.get_report_instructions():
+            return
+        try:
+            self.repos.settings.set_report_instructions(text)
+        except Exception:  # never block the report screen because of it
+            logger.exception("Could not save the report instructions.")
 
     def set_report_period(self, start: date, end: date) -> None:
         assert self.report_request is not None
@@ -620,18 +759,73 @@ class KidNotesApp:
         self.report_request.error = None
         self.render()
 
+    # --- side menu and settings --------------------------------------------------------
+
+    def _install_menu(self) -> None:
+        """The side menu belongs to the page: ☰ on home, or a swipe from the left edge."""
+        self.page.drawer = build_menu(
+            self.tr, self.account_email, on_home=self._menu_home,
+            on_classes=self._menu_classes, on_settings=self._menu_settings,
+            on_sign_out=self._menu_sign_out,
+        )
+
+    async def open_menu(self, _: Any = None) -> None:
+        await self.page.show_drawer()
+
+    async def _menu_home(self, _: Any = None) -> None:
+        await self.page.close_drawer()
+        self.go_home()
+
+    async def _menu_classes(self, _: Any = None) -> None:
+        await self.page.close_drawer()
+        self.open_classes()
+
+    async def _menu_settings(self, _: Any = None) -> None:
+        await self.page.close_drawer()
+        self.open_settings()
+
+    async def _menu_sign_out(self, _: Any = None) -> None:
+        await self.page.close_drawer()
+        if self.on_sign_out is not None:
+            self.on_sign_out()
+
+    def open_settings(self) -> None:
+        if self.route != "settings":
+            self.settings_back_route = self.route
+        self.editing_groq_key = False
+        self.navigate("settings")
+
+    def _settings_screen(self) -> SettingsScreen:
+        saved = bool(self.repos.settings.get_groq_api_key())
+        return SettingsScreen(
+            self.account_email,
+            has_saved_key=saved,
+            env_key_in_use=not saved and bool(os.environ.get("GROQ_API_KEY")),
+            editing_key=self.editing_groq_key,
+            tr=self.tr,
+            on_back=lambda: self.navigate(self.settings_back_route),
+            on_save_key=self.save_groq_key,
+            on_change_key=self.change_groq_key,
+            on_remove_key=self.remove_groq_key,
+        )
+
     def save_groq_key(self, key: str) -> None:
-        assert self.report_request is not None
         self.repos.settings.set_groq_api_key(key)
-        self.report_request.editing_key = False
-        self.report_request.error = None
+        self.editing_groq_key = False
+        if self.report_request is not None:
+            self.report_request.error = None  # "Add your key..." no longer applies
         self.render()
-        self.page.show_dialog(info_message(self.tr.t("reports.api_key_saved")))
+        self.notify(self.tr.t("settings.api_key_saved"))
 
     def change_groq_key(self) -> None:
-        assert self.report_request is not None
-        self.report_request.editing_key = True
+        self.editing_groq_key = True
         self.render()
+
+    def remove_groq_key(self) -> None:
+        self.repos.settings.clear_groq_api_key()
+        self.editing_groq_key = False
+        self.render()
+        self.notify(self.tr.t("settings.api_key_removed"))
 
     async def generate_reports(self, _: Any = None) -> None:
         """One report per selected student, one after the other, updating the screen."""
@@ -654,10 +848,18 @@ class KidNotesApp:
             self.render()
             return
 
+        self.save_report_instructions(request.instructions)
         request.running = True
         request.statuses = {s["id"]: ("waiting", None) for s in students}
         self.render()
         client = self.ai_client_factory(key)
+        logger.info(
+            "Generating reports: %d student(s), period %s to %s, key from %s, "
+            "teacher's instructions: %s.",
+            len(students), request.start, request.end, self._groq_key_source(),
+            f"{len(request.instructions.strip())} chars" if request.instructions.strip()
+            else "none",
+        )
         names = self._all_student_names(request.class_id)
         try:
             for student in students:
@@ -673,11 +875,17 @@ class KidNotesApp:
                 classmates = [n for sid, n in names.items() if sid != student["id"]]
                 try:
                     text = await write_report(
-                        client, self.tr, student, events, request.start, request.end, classmates
+                        client, self.tr, student, events, request.start, request.end,
+                        classmates, request.instructions,
                     )
                 except ReportAIError as failure:
+                    # Student id only: the name is personal data.
+                    logger.warning(
+                        "Report for student %s failed: %s (%s)",
+                        student["id"], failure.code, failure.detail or "no detail",
+                    )
                     request.statuses[student["id"]] = ("error", failure.code)
-                    if failure.code in ("invalid_key", "missing_key"):
+                    if failure.code in ("invalid_key", "missing_key", "model"):
                         # The same problem would happen for every student: stop here.
                         for sid, (state, _) in request.statuses.items():
                             if state == "waiting":
@@ -695,6 +903,7 @@ class KidNotesApp:
                     len(events), getattr(client, "model", ""),
                 )
                 request.statuses[student["id"]] = ("done", report["id"])
+                logger.info("Report for student %s ready (%d events).", student["id"], len(events))
                 self.render()
         finally:
             request.running = False
@@ -723,8 +932,107 @@ class KidNotesApp:
             on_save_pdf=self.save_report_pdf,
             on_share_pdf=self.share_report_pdf,
             on_back=self.close_report_review,
+            on_save_text=self.save_report_text,
+            photos=[(pid, self.repos.events.load_photo(pid)) for pid in report["photo_ids"]],
+            on_add_photos=self.open_report_photos,
+            on_remove_photo=self.remove_report_photo,
         )
         return self._review_screen
+
+    # --- images of a report ----------------------------------------------------------
+
+    def _events_with_photos(self, report: dict[str, Any]) -> list[dict[str, Any]]:
+        """The child's events of the report period that have photos, oldest first."""
+        events = events_in_period(
+            self.repos.events.story(report["student_id"]),
+            report["period_start"],
+            report["period_end"],
+        )
+        return [e for e in reversed(events) if e["photo_ids"]]
+
+    def open_report_photos(self) -> None:
+        report = self.repos.reports.get(self.review_report_id or "")
+        if report is None:
+            return
+        self.photo_selection = list(report["photo_ids"])
+        self.navigate("report_photos")
+
+    def _report_photos_screen(self) -> ReportPhotosScreen | None:
+        report = self.repos.reports.get(self.review_report_id or "")
+        if report is None:
+            return None
+        student = self.repos.students.get(report["student_id"])
+        groups = []
+        for event in self._events_with_photos(report):
+            items = []
+            for photo_id in event["photo_ids"]:
+                data = self.repos.events.load_photo(photo_id)
+                items.append({"id": photo_id, "data": data,
+                              "supported": data is not None and pdf_compatible(data)})
+            groups.append({
+                "date": self.tr.format_date(event["occurred_on"]),
+                "description": event["description"],
+                "photos": items,
+            })
+        return ReportPhotosScreen(
+            student["name"] if student else "?",
+            self.tr.format_date(report["period_start"]),
+            self.tr.format_date(report["period_end"]),
+            groups,
+            self.photo_selection,
+            MAX_REPORT_PHOTOS,
+            self.tr,
+            on_confirm=self.insert_report_photos,
+            on_back=lambda: self.navigate("report_review"),  # nothing changes
+            on_limit=lambda: self.notify(
+                self.tr.t("report_photos.max", count=MAX_REPORT_PHOTOS), error=True
+            ),
+        )
+
+    def insert_report_photos(self, photo_ids: list[str]) -> None:
+        """Saves the chosen images in the report, back to the report."""
+        try:
+            self.repos.reports.set_photos(self.review_report_id or "", photo_ids)
+        except Exception:
+            logger.exception("Could not save the report images.")
+            self.notify(self.tr.t("report_photos.save_failed"), error=True)
+            return
+        self.navigate("report_review")
+        self.notify(
+            self.tr.plural("report_photos.inserted", len(photo_ids)) if photo_ids
+            else self.tr.t("report_photos.none")
+        )
+
+    def remove_report_photo(self, photo_id: str) -> None:
+        report = self.repos.reports.get(self.review_report_id or "")
+        if report is None:
+            return
+        try:
+            self.repos.reports.set_photos(
+                report["id"], [pid for pid in report["photo_ids"] if pid != photo_id]
+            )
+        except Exception:
+            logger.exception("Could not remove the report image.")
+            self.notify(self.tr.t("report_photos.save_failed"), error=True)
+            return
+        self.render()  # same screen: keeps the scroll position
+        self.notify(self.tr.t("report_review.photo_removed"))
+
+    def _report_photos_for_pdf(self, report: dict[str, Any]) -> list[tuple[bytes, str]]:
+        """(bytes, caption = the event's date) of the report's images that still exist."""
+        dates = {
+            pid: self.tr.format_date(event["occurred_on"])
+            for event in self.repos.events.story(report["student_id"])
+            for pid in event["photo_ids"]
+        }
+        photos = []
+        for photo_id in report["photo_ids"]:
+            data = self.repos.events.load_photo(photo_id)
+            if data is None:
+                logger.warning("Report image %s is no longer available.", photo_id)
+                continue
+            photos.append((data, dates.get(photo_id, "")))
+        return photos
 
     def _on_review_change(self, text: str) -> None:
         self.review_draft = text
@@ -732,6 +1040,24 @@ class KidNotesApp:
     def _review_changed(self) -> bool:
         report = self.repos.reports.get(self.review_report_id or "")
         return report is not None and (self.review_draft or "") != report["text"]
+
+    def save_report_text(self) -> None:
+        """"Save text": keeps the teacher's edits (no PDF)."""
+        report = self.repos.reports.get(self.review_report_id or "")
+        if report is None:
+            return
+        if not (self.review_draft or "").strip():
+            self._review_screen.show_error(self.tr.t("report_review.text_required"))
+            return
+        try:
+            if self._review_changed():
+                self.repos.reports.update_text(report["id"], self.review_draft or "")
+        except Exception:
+            logger.exception("Could not save the report text.")
+            self.notify(self.tr.t("report_review.save_failed"), error=True)
+            return
+        self._review_screen.show_error(None)
+        self.notify(self.tr.t("report_review.saved"))
 
     def _report_pdf(self) -> tuple[bytes, str] | None:
         """Saves the edited text, then builds the PDF (None: nothing to export)."""
@@ -745,7 +1071,8 @@ class KidNotesApp:
             report = self.repos.reports.update_text(report["id"], self.review_draft or "")
         student = self.repos.students.get(report["student_id"]) or {"name": "?"}
         class_data = self.repos.classes.get(report["class_id"]) or {"name": ""}
-        pdf = build_report_pdf(self.tr, student, class_data["name"], report)
+        pdf = build_report_pdf(self.tr, student, class_data["name"], report,
+                               photos=self._report_photos_for_pdf(report))
         return pdf, report_filename(student, report)
 
     async def save_report_pdf(self, _: Any = None) -> None:
@@ -754,12 +1081,10 @@ class KidNotesApp:
             if result is None:
                 return
             if await self.exporter.save(*result):
-                self.page.show_dialog(info_message(self.tr.t("report_review.pdf_saved")))
+                self.notify(self.tr.t("report_review.pdf_saved"))
         except Exception:
             logger.exception("Could not save the PDF.")
-            self.page.show_dialog(
-                info_message(self.tr.t("report_review.export_failed"), error=True)
-            )
+            self.notify(self.tr.t("report_review.export_failed"), error=True)
 
     async def share_report_pdf(self, _: Any = None) -> None:
         try:
@@ -769,9 +1094,7 @@ class KidNotesApp:
             await self.exporter.share(*result)
         except Exception:
             logger.exception("Could not share the PDF.")
-            self.page.show_dialog(
-                info_message(self.tr.t("report_review.export_failed"), error=True)
-            )
+            self.notify(self.tr.t("report_review.export_failed"), error=True)
 
     def close_report_review(self) -> None:
         if self._review_changed():

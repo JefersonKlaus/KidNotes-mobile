@@ -9,8 +9,9 @@ The app is **not about evaluating children**. Teachers use it to record
 child's growth and learning. Each event is linked to one or more children and
 becomes part of each child's **learning story**.
 
-**Sign in → Home (classes) → Class screen (children) → Child screen (learning story)**
-**Class screen → Reports → one report per student (AI draft → review → PDF)**
+**Sign in → Home (the principal class: children) → Child screen (learning story)**
+**Home → Reports → one report per student (AI draft → review → PDF)**
+**☰ menu → Classes → a class (add / edit / remove students) or ★ set the principal class**
 
 What the teacher can do today:
 
@@ -19,9 +20,29 @@ What the teacher can do today:
   password every time it starts; the **email of the last account used on the
   device comes already filled in**. Each account has **its own data**, encrypted with a
   key that only the password unlocks (see [LGPD](#7-lgpd-data-protection)).
-- **Home:** the signed-in teacher (email) with **Sign out**, their classes with
-  the number of children, and a new class form (name + color).
-- **Class screen:**
+- **Side menu (☰):** the ☰ button on the home screen (or a swipe from the
+  left edge of any screen) opens a side menu with the app name, the signed-in
+  teacher's email, **Home** ("Início"), **Classes** ("Turmas"), **Settings**
+  ("Configurações") and **Sign out** ("Sair").
+- **Settings:** the account (email) and the **Groq API key** of the AI reports:
+  paste and save it, **Change** it or **Remove** it. It is stored encrypted in
+  the teacher's account.
+- **Classes** (☰ → Classes): all the teacher's classes with the number of
+  children, and **Add new class** (name + color). Like home, it has ☰ at the
+  top and **no back button**: to go home, use the side menu (☰ → Home). The **principal class** has
+  a "Principal" badge and a filled ★; tap ☆ on another class to make it the
+  principal one ("Preschool II is now the principal class."). **Tap a class
+  to manage its students:**
+  - **Add student** (full-width button at the bottom).
+  - The list of children (A→Z). Tap a child, or ⋮ → **Edit**, to edit them
+    (name, birth date). ⋮ → **Remove from class** deactivates the child:
+    their record and story are kept.
+  - **Transferred students:** removed children stay listed after the active
+    ones, under "Transferred students (n)" ("Alunos transferidos"), **grey**,
+    with "Transferred on <date>" and a **Reactivate** ("Reativar") button.
+    They can't be linked to new events while transferred.
+  - ☆ at the top sets this class as the principal one.
+- **Home = the principal class** (the app opens on it):
   - **Add event** (full-width button in the fixed action bar at the bottom):
     **take a photo or choose photos from the gallery**, describe what happened,
     set the date and **link the children** who took part. The teacher always
@@ -30,20 +51,11 @@ What the teacher can do today:
     goes into each linked child's story. After saving, an **information
     message** confirms it, for example "Event saved to Clara Souza's learning
     story." or "... the learning stories of 3 students.".
-  - **Add student**: an icon-only button (👤+) at the top, mostly used at the
-    beginning of the year. Its tooltip says "Add student" ("Adicionar aluno").
   - **Reports** ("Relatórios"): an icon-only button (📄) at the top that opens
     the report screen (see [Reports](#8-reports-ai--pdf)).
   - The list of children (A→Z, with age and number of events). Tap a child to
-    open their story. The ⋮ menu **edits** a child (name, birth date) or
-    **removes** them from the class. Removing **deactivates** the child: their
-    record and story are kept.
-  - **Transferred students:** removed children **stay on the class screen**,
-    after the active ones, under "Transferred students (n)" ("Alunos
-    transferidos"). They are shown **grey**, with the subtitle "Transferred on
-    <date>" ("Transferido(a) em"), and a **Reactivate** ("Reativar") button that
-    brings them back to the class. They can't be linked to new events while
-    transferred.
+    open their story. Students are **not added or edited here**: that is done
+    on the Classes page (☰ → Classes → the class).
 - **Child screen:**
   - **Bottom action bar with two buttons side by side**, within easy reach:
     **Extra information** ("Informações extras", left) and **Add event**
@@ -64,9 +76,9 @@ What the teacher can do today:
     ("Edit event"): change the text, the date, the children, and remove or add
     photos. Saving shows "Event updated."; leaving with unsaved changes asks
     first.
-- **Start screen:** once the teacher has chosen a class, the app **opens
-  directly on that class** the next time it starts (see
-  [Start screen](#start-screen)).
+- **Start screen:** the app opens on the **principal class** (see
+  [Start screen](#start-screen)). Without any class yet, home says so, with an
+  **Open classes** button.
 
 Everything (accounts, classes, children, events **and photos**) is saved
 **encrypted on the device** (see [Database](#6-database-local--encrypted) and
@@ -159,11 +171,34 @@ flet --version   # Flet: 1.0.5
 pytest -q        # all tests pass
 ```
 
-### 1.4 Local settings (environment variables)
+### 1.4 Lint and tests (what CI checks)
+
+Every **push** (any branch) and **pull request** on GitHub runs the
+**CI** workflow (`.github/workflows/ci.yml`, tab **Actions**):
+
+| Job | What it runs | Where |
+| --- | --- | --- |
+| **Lint (ruff)** | `ruff check .` | Ubuntu, Python 3.12 |
+| **Tests** | `python -m pytest -q` | Ubuntu with Python 3.10 (the oldest supported) and 3.12; Windows with Python 3.12 |
+
+A red ✗ on the commit or pull request means one of them failed; lint
+problems are shown on the lines of code. Run the same checks before pushing:
+
+```bash
+ruff check .          # lint (the rules are in pyproject.toml, [tool.ruff])
+ruff check --fix .    # fixes what it can (e.g. import order)
+pytest -q             # tests
+```
+
+`ruff` is in the `dev` group, pinned to the version CI uses (CI reads it
+from `pyproject.toml`). To upgrade it, change the version there and fix what
+the new version reports.
+
+### 1.5 Local settings (environment variables)
 
 The app needs **no configuration to run**. The only optional setting is the
-Groq key for **Reports**, and it can also be typed inside the app (step 3 of
-[Reports](#8-reports-ai--pdf)).
+Groq key for **Reports**, and it can also be typed inside the app, in
+**Settings** (☰ → Settings; see [Reports](#8-reports-ai--pdf)).
 
 For development, keep local settings in a **`.env` file**:
 
@@ -194,10 +229,12 @@ GROQ_API_KEY=gsk_your_key_here
 | Variable | Required | What it does |
 | --- | --- | --- |
 | `GROQ_API_KEY` | no | Groq key used by **Reports** when no key is saved in the app. |
+| `GROQ_MODEL` | no | Groq model for **Reports** (default `GROQ_MODEL` in `reports/ai.py`). |
+| `KIDNOTES_LOG_LEVEL` | no | Level of the app's logs in the terminal (default `INFO`). See [Troubleshooting](#9-troubleshooting). |
 | `FLET_APP_STORAGE_DATA` | no (set by `flet run`) | Data folder. `flet run` points it to `.flet/storage/data`; set it only to use another folder. |
 | `FLET_PLATFORM` | **don't set it** | Set only by packaged apps. It switches the app to the phone's Keystore/Keychain, which isn't available on a computer. |
 
-### 1.5 Local data
+### 1.6 Local data
 
 While developing, everything the app saves goes to **`.flet/storage/data/`**:
 the account registry, the encrypted databases and photos, and the development
@@ -297,10 +334,13 @@ against a fake Flet page (`tests/conftest.py`) and check:
   - the device language is detected correctly, with English as the fallback;
   - plurals work.
 - [`tests/test_app.py`](./tests/test_app.py), the screens end to end:
-  - the language and the start screen (last chosen class, or home);
-  - home: the class list with counts, the empty state, and the "New class" form;
-  - class screen layout: **"Add student" at the top**, **"Add event" in the
-    fixed bottom action bar**;
+  - the language and the start screen (the principal class, the first class,
+    the "last class" of older versions, no class);
+  - the Classes page: the list with counts, ★ principal class, the empty
+    state, and the "New class" form;
+  - home layout: ☰ and 📄 at the top, **"Add event" in the fixed bottom
+    action bar**, no student editing; the manage screen: **"Add student" in
+    the bottom bar**, ⋮ on each child;
   - students: add (with the date picker), edit, clear the birth date,
     validation, remove with confirmation (deactivate), cancel and errors;
   - transferred students: they stay on the class screen (grey, "Transferred on
@@ -346,8 +386,8 @@ against a fake Flet page (`tests/conftest.py`) and check:
   - **each teacher only sees their own classes**;
   - editing an event: text, date, children, removing/adding photos, "Event
     updated.", a transferred child stays linked, cancel with/without changes;
-  - the home header has no avatar circle; "Add student" is an icon-only button
-    with a translated tooltip;
+  - the home header has no avatar circle; students are added only on the
+    Classes page, and appear on home when they belong to the principal class;
   - the child screen's bottom bar: "Extra information" and "Add event" side
     by side, same width, "Add event" as the main action;
   - extra information: a screen (not a dialog) with a big full-width text
@@ -495,9 +535,10 @@ state-driven rendering** (unidirectional data flow):
 | Views | `screens/*.py` | Each screen is a class with a `build()` method that returns Flet controls. A screen can also have `bottom_bar()` (a fixed action bar) and `scrollable = False` (the camera preview). Screens get data, a `Translator` and callbacks; they never navigate or change app state themselves. The forms and dialogs also receive the repository they save to, and report back through `on_saved` / `on_removed`. |
 | Repositories | `database/classes.py`, `students.py`, `events.py`, `settings.py`, `repositories.py` | `ClassRepository`, `StudentRepository`, `EventRepository` and `AppSettings`, bundled in `Repositories`. They validate input, read and write the database, and return plain dicts, so the views don't know about the database. |
 | Storage | `database/connection.py`, `photos.py`, `crypto.py`, `keys.py`, `accounts.py`, `bootstrap.py` | Encrypted SQLite access, encrypted photo files, AES-256-GCM, the device key, accounts and their keys, and startup (see [Database](#6-database-local--encrypted)). |
-| Reports | `reports/` (`prompt.py`, `ai.py`, `generate.py`, `document.py`, `pdf.py`, `export.py`), `screens/reports.py`, `database/reports.py` | Builds the pseudonymized prompt, calls Groq, restores the name, stores the draft (encrypted), builds the PDF and saves/shares it (see [Reports](#8-reports-ai--pdf)). |
+| Reports | `reports/` (`prompt.py`, `ai.py`, `generate.py`, `document.py`, `pdf.py`, `images.py`, `export.py`), `screens/reports.py`, `screens/report_photos.py`, `database/reports.py` | Builds the pseudonymized prompt, calls Groq, restores the name, stores the draft (encrypted), builds the PDF and saves/shares it (see [Reports](#8-reports-ai--pdf)). |
 | Media | `media.py`, `screens/camera.py` | The gallery picker and the camera; removes plain photo copies left by the plugins (see [Photos](#photos)). |
-| UI components | `components.py` | Reusable widgets: `page_header`, `avatar`, `section_title`, `empty_state`, `bottom_action_bar`, `photo`. |
+| UI components | `components.py` | Reusable widgets: `page_header`, `avatar`, `section_title`, `empty_state`, `bottom_action_bar`, `photo`, and `TopNotice`: the information messages ("Report deleted.") shown at the **top** of the screen, over the page (`page.overlay`), so they never cover the bottom buttons; they hide after 4 s or with ✕. |
+| Scroll position | `show_screen` in `app.py` | When the **same screen** is shown again (after deleting, saving, changing the period...), its scrollable body is reused and only its content changes, so the page **stays where it was**. Opening another screen starts at the top. |
 | Design tokens | `theme.py` | Color palette shared by every screen. |
 | i18n | `i18n.py` | Translation tables, `Translator` (`t`, `plural`, `format_date`, `format_age`) and device language detection. |
 | Dates | `dates.py` | Time-zone safe conversion of the picked date and age calculation. |
@@ -532,12 +573,18 @@ resulting controls.
 
 ### Start screen
 
-When the teacher opens a class, its id is saved (encrypted) in the `settings`
-table (`AppSettings.set_last_class_id`). On the next start, `KidNotesApp`
-opens directly on that class screen. If the class no longer exists, or no
-class was ever chosen, the app starts on the home. Going back to the home does
-not forget the class: the app keeps opening the last class the teacher
-*chose*, until they choose another one.
+Home is the **principal class**. Its id is saved (encrypted) in the
+`settings` table (`AppSettings.set_default_class_id`) when the teacher taps ★
+on the Classes page (or on a class's manage screen). On every start,
+`KidNotesApp` opens on it. Rules:
+
+- No principal class saved (or it no longer exists): the **first class**
+  becomes the principal one (and is saved).
+- The teacher's **first class** becomes the principal one as soon as it is
+  created.
+- No class at all: home shows "No class yet" with **Open classes**.
+- Updating from a version that remembered the "last opened class"
+  (`last_class`): that class becomes the principal one.
 
 ### Adding a new screen
 
@@ -702,7 +749,7 @@ repos.students.list_active(new_class["id"])                # active students, A�
 repos.students.list_inactive(new_class["id"])              # transferred students, A→Z
 repos.students.reactivate(maya["id"])                      # back to the class
 repos.students.update_notes(maya["id"], "Loves sleeping after lunch.")  # extra information
-repos.settings.set_last_class_id(new_class["id"])          # start screen
+repos.settings.set_default_class_id(new_class["id"])       # principal class (home)
 
 event = repos.events.add(                                  # photos: list of bytes
     new_class["id"], [maya["id"]], "Counted to ten while building a tower",
@@ -742,7 +789,7 @@ personal data):
 | **Encryption tied to the password** | Without the teacher's password, the data and photos **can't be decrypted**, even by someone with the unlocked phone and access to the Keystore/Keychain. The password is never stored. |
 | **Separation between teachers** | Each account has its own key, database and photos. |
 | **Data stays on the device** | No server, no cloud, no analytics. The only exception is **report drafts** (next row). |
-| **Reports: minimum data to the AI** | Only when the teacher taps "Generate reports": the **descriptions and dates of the period's events**, the **extra information** and the child's **age** are sent to **Groq** (an AI service outside Brazil). **Names are replaced** before sending (`[NOME]`, "um(a) colega") and put back on the device; **photos, birth dates and class names are never sent**. The screen says this before generating. |
+| **Reports: minimum data to the AI** | Only when the teacher taps "Generate reports": the **descriptions and dates of the period's events**, the **extra information**, the child's **age** and the teacher's **report instructions** (if any) are sent to **Groq** (an AI service outside Brazil). **Names are replaced** before sending (`[NOME]`, "um(a) colega") and put back on the device; **photos, birth dates and class names are never sent**. The screen says this before generating. |
 | **Integrity** | Authenticated encryption: modified or swapped data/photos are detected and rejected. |
 
 What the app **doesn't** cover (organizational measures for the school):
@@ -772,26 +819,84 @@ teacher writes a descriptive development report.
 2. Choose the **period** ("From" / "To"; the default is the last ~6 months)
    and the **students**. Each chip shows how many events the child has in the
    period, and "Whole class" selects everyone.
-3. The first time, paste a **Groq API key** (create one at
-   [console.groq.com](https://console.groq.com)). It is stored **encrypted** in
-   the teacher's account. For development, the `GROQ_API_KEY` environment
-   variable is used if no key is saved.
+   Optionally, write **instructions for the report** ("Orientações para o
+   relatório"): structure, sections, order, standards (e.g. BNCC), tone. For
+   example: "Organize in three parts: Interactions, Language and Next steps".
+   They are saved **encrypted** in the teacher's account (when leaving the
+   field and when generating) and come back for the next reports, in every
+   class. Up to 2000 characters.
+3. The first time, save a **Groq API key** (create one at
+   [console.groq.com](https://console.groq.com)) in **Settings** (☰ →
+   Settings). Without a key, the report screen says so, with a **Settings**
+   button that opens it (← comes back to the reports). The key is stored
+   **encrypted** in the teacher's account. For development, the
+   `GROQ_API_KEY` environment variable is used if no key is saved (Settings
+   says so).
 4. **Generate reports**: the students are processed one by one, and the screen
    shows each status (waiting, writing, ready, no events in the period, or the
    error). Students without events are skipped: nothing is sent for them.
-5. **Open** a report: the **draft is editable**. The teacher reviews it, then
-   taps **Save PDF** (system "save as" dialog, or a download on the web) or,
-   on phones, **Share PDF** (WhatsApp, e-mail, Drive...). Edits are saved
-   before the PDF is made. Generated reports stay listed under "Generated
-   reports" to reopen later.
+5. **Open** a report: the **draft is editable**. Two buttons at the bottom:
+   **Save text** ("Salvar texto") keeps the edits ("Report saved."), and
+   **Generate PDF** ("Gerar PDF") saves the edits too, then opens the system
+   "save as" dialog (a download on the web). On phones, the **share** icon at
+   the top sends the PDF (WhatsApp, e-mail, Drive...). Generated reports stay
+   listed under "Generated reports" to reopen later, **grouped by month**
+   (the month they were generated in, newest first, e.g. "Julho de 2025 (3)").
+   Tap a month to show or hide its reports; only the **latest month is open**
+   at first. The choice is kept while the teacher works on the screen.
+   **Images:** under the text, **Add images** ("Adicionar imagens") opens
+   **Choose images**: every photo of the child's events **in the report's
+   period**, grouped by event (oldest first, with date and description). Tap
+   to select **many** (tap again to unselect); **Insert images (n)** puts them
+   in the report, in the order of the events, and goes back ("2 images in the
+   report."). Back (←) changes nothing. The chosen images appear as
+   thumbnails, each with ✕ to remove it. They are saved with the report right
+   away (references to the event photos, not copies), and the text being
+   edited is kept. At most **12 images** per report, to keep the PDF small
+   enough to share. Photos the PDF can't hold (WebP, GIF, HEIC) are shown
+   greyed out ("Not supported in the PDF").
+6. **Delete** a report: the 🗑 button on its line in "Generated reports" asks
+   for confirmation ("Delete report?"), then deletes it for good and shows
+   "Report deleted." Only the report goes; the events of the learning story
+   are kept. The button is disabled while reports are being generated.
 
 **What the AI is asked** (`reports/prompt.py`): to write like an
 early-childhood teacher. The text should be descriptive and warm, not
-evaluative, with no grades, comparisons or diagnoses. It must **use only the
-records**, never invent, and link experiences to the **BNCC fields of
-experience**. It must refer to the child only as `[NOME]` / "a criança", with
-no gendered words (the app doesn't record gender), and be 3 to 6 paragraphs
-ending with next steps.
+evaluative, with no grades, comparisons or diagnoses. It must refer to the
+child only as `[NOME]` / "a criança", with no gendered words (the app doesn't
+record gender), and end with next steps.
+
+**The AI must not invent anything.** It only organizes and words what the
+teacher recorded:
+
+- **Strict rules in the prompt:** use only the sources; no invented facts,
+  activities, quotes, feelings or progress; no generalizing from one record
+  ("always", "has mastered"); no guessing abilities from the age; BNCC fields
+  may be named, but no learning the records don't describe.
+- **Length follows the records** (`max_paragraphs`): 1 source → at most 2
+  paragraphs, up to 3 → 3, up to 6 → 4, more → 6. The AI is never pushed
+  to fill space.
+- **Numbered sources, checked on the device** (`ground_answer`): the
+  teacher's notes and each record get a number, and every paragraph must end
+  with the numbers it is based on (`[1][3]`). A paragraph with no valid
+  source is **removed**; if none is left, the report is discarded ("The AI
+  text was not based on your records"). The numbers are then taken out of the
+  text. Removals are logged (counts and ids only). If the AI cites nothing at
+  all, the text can't be checked: it is kept and a warning is logged.
+- **Photo-only records are not sent**: the AI can't see photos and would guess.
+- Low `temperature` (0.2), and small models are not used as replacements.
+
+**The teacher's instructions** change the **form** of the report (structure,
+sections, order, standards, tone), **never its content**: they are sent after
+the sources with the reminder that they don't allow inventing, and the
+system prompt says that a part the sources can't support is left out. When
+there are instructions, **section titles** are allowed: a short line without a
+source (e.g. "Linguagem"), kept only when a paragraph with sources follows it
+(an empty section is dropped). Titles are **bold** in the PDF and are never
+left alone at the bottom of a page. Names in the instructions are replaced like
+everywhere else.
+
+The teacher still reviews and edits every draft before the PDF.
 
 **What is sent and what isn't**: see [LGPD](#7-lgpd-data-protection). Example
 of what Groq receives:
@@ -800,24 +905,48 @@ of what Groq receives:
 Período: 01/02/2025 a 30/06/2025
 Idade da criança no fim do período: 4 anos
 
-Informações da professora sobre a criança:
-[NOME] adora dormir depois do almoço.
+Fontes (3):
+[1] Informações da professora sobre a criança: [NOME] adora dormir depois do almoço.
+[2] Registro de 01/03/2025: [NOME] pintou o sol.
+[3] Registro de 02/05/2025: [NOME] contou os blocos com o um(a) colega. (com 1 colega(s))
 
-Registros de momentos significativos (2):
-- 01/03/2025: [NOME] pintou o sol.
-- 02/05/2025: [NOME] contou os blocos com um(a) colega. (com 1 colega(s))
+Escreva no máximo 3 parágrafo(s), incluindo os próximos passos, e termine cada parágrafo com as suas fontes, por exemplo [1].
+
+Orientações da professora para o relatório (forma, estrutura e padrões; elas não autorizam inventar nada, e os títulos de seção não contam como parágrafos):
+Organize em duas partes: Interações e Próximos passos.
 ```
 
+(The last two lines only appear when the teacher wrote instructions.)
+
 **The PDF** (`reports/document.py`): the title, the child's name, class, age,
-period and issue date, the text, and a signature line for the teacher, with
-"Page X of Y" at the bottom. A4, standard Helvetica font (all Portuguese
+period and issue date, the text, the chosen **images** ("Photo records": two
+per row, each with its event's date) and a signature line for the teacher,
+with "Page X of Y" at the bottom. A4, standard Helvetica font (all Portuguese
 accents). It is written by `reports/pdf.py`, a small pure-Python PDF writer.
 The common PDF libraries need Pillow (native code), which is one more binary
 package for Android/iOS. The PDF is made in memory and goes straight to where
 the teacher saves or shares it.
 
-**Model:** `GROQ_MODEL` in `reports/ai.py` (`llama-3.3-70b-versatile`). Change
-it there if Groq retires the model.
+**Images in the PDF** (`reports/images.py`, pure Python too): **JPEG** (the
+camera and the phone gallery give JPEG) goes in as it is, and its EXIF
+orientation is applied, so photos taken with the phone upright are not drawn
+sideways. **PNG** works too (with transparency over the white page; a large
+transparent PNG takes a second or two). WebP, GIF, HEIC, interlaced PNGs and
+16-bit transparent PNGs can't be decoded without a native library: they are
+left out (the picker doesn't let the teacher choose them). An image whose
+photo was later removed from its event shows as "Image not available" and is
+skipped in the PDF. Photos are never sent to the AI.
+
+**Model:** `GROQ_MODEL` in `reports/ai.py` (`llama-3.3-70b-versatile`); in
+development `GROQ_MODEL` in `.env` overrides it. If Groq answers that the model
+doesn't exist or the key has no access to it (`model_not_found`,
+`model_decommissioned`: the model was retired, or the key's Groq project
+doesn't allow it), the app asks Groq for the models the key can use
+(`GET /openai/v1/models`), logs the list, switches to the first available one
+of `PREFERRED_MODELS` and tries again. Each saved report records the model
+that wrote it. If none of them is available, the screen says "The AI model is
+not available for this API key"; pick a model from the logged list and set
+`GROQ_MODEL`.
 
 ## 9. Troubleshooting
 
@@ -829,14 +958,17 @@ it there if Groq retires the model.
 | PowerShell: *running scripts is disabled on this system* | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`, then activate again. |
 | `flet: command not found` / `No module named flet` | The virtual environment isn't active in this terminal: activate it (step 1.2). |
 | "Your data can't be opened" at start-up | The development key (`.flet/storage/data/dev-database.key`) was deleted but the data is still there. In development, delete `.flet/storage/data/` to start over. |
-| Reports: "Add your Groq API key first." | Save a key in the report screen, or set `GROQ_API_KEY` in `.env` (step 1.4) and restart the app. |
+| Reports: "Add your Groq API key first." | Save a key in the report screen, or set `GROQ_API_KEY` in `.env` (step 1.5) and restart the app. |
+| Reports: "The AI model is not available for this API key" / log `model_not_found` | The model was retired by Groq, or your Groq project doesn't allow it (console.groq.com → project settings → model permissions/limits). The log line `Groq: models available for this key` lists what the key can use: set one in `GROQ_MODEL` (`reports/ai.py`, or `.env` in development). |
 | Reports: "Invalid API key." / "Too many requests" | Check the key at console.groq.com. The free tier has rate limits: wait a minute and try again. |
+| Reports: "The AI service had a problem" ("O serviço de IA teve um problema") or any other report error | Look at the terminal where `flet run` is running. Each Groq call is logged by `reports.ai`: `Groq request: POST <url> model=<model> key=gsk_...abcd`, then either `Groq response: HTTP 200 ...` or `Groq error response: HTTP <status>: <Groq's message> [<type> / <code>]` (or `Groq request failed (network): ...` for DNS, proxy, firewall or certificate problems). The app also logs `Report for student <id> failed: <code> (<detail>)`. A decommissioned model: change `GROQ_MODEL` in `reports/ai.py`. The logs never contain the key (only its first/last 4 characters), the prompt or the report text. |
 | "Take photo" is grey | Expected in a desktop window: the camera works on phones and in the browser. Use **Gallery**. |
 
 ## Project structure
 
 ```
 KidNotes-mobile/
+├── .github/workflows/ci.yml  # CI: ruff + pytest on every push / pull request
 ├── main.py              # Flet entry point
 ├── app.py               # KidNotesApp: state + navigation (controller)
 ├── i18n.py              # translations (en/pt) + language detection
@@ -852,6 +984,7 @@ KidNotes-mobile/
 │   ├── generate.py      # events of the period → draft
 │   ├── document.py      # the report PDF layout
 │   ├── pdf.py           # small PDF writer (+ font_metrics.py)
+│   ├── images.py        # JPEG/PNG photos for the PDF (EXIF orientation, transparency)
 │   └── export.py        # save / share the PDF
 ├── database/
 │   ├── bootstrap.py     # opens the database at startup (folder + key)
@@ -868,15 +1001,19 @@ KidNotes-mobile/
 │   └── repositories.py  # Repositories bundle
 ├── screens/
 │   ├── auth.py          # sign in / create account
-│   ├── dashboard.py     # home: class list (from the database), sign out
+│   ├── classes.py       # Classes page: all classes, ★ principal class, new class
+│   ├── menu.py          # side menu: Settings, Sign out
+│   ├── settings.py      # settings: account, Groq API key
 │   ├── class_form.py    # "New class" form (saves to the database)
-│   ├── class_screen.py  # class screen: children, Add student, Add event
+│   ├── class_screen.py  # home (principal class: children, Add event) and the
+│   │                    # manage screen (Add / edit / remove students)
 │   ├── student_form.py  # add / edit student (name, birth date)
 │   ├── child.py         # child screen: extra information + learning story
 │   ├── extra_info.py    # extra information screen (notes about the child)
 │   ├── event_form.py    # new / edit event: photos, description, date, children
 │   ├── camera.py        # camera preview + capture
-│   └── reports.py       # report screen + review screen
+│   ├── reports.py       # report screen + review screen
+│   └── report_photos.py # choose the images of a report
 ├── tests/               # pytest suite (not bundled into the app)
 └── pyproject.toml       # dependencies, mobile build and pytest config
 ```
@@ -892,13 +1029,12 @@ KidNotes-mobile/
   network access to it); the request follows Groq's OpenAI-compatible API and
   is tested against a mock. Try it first with a real key. Each teacher needs
   their own Groq key (the free tier has rate limits: on "Too many requests",
-  wait a minute). A generated report can be edited and exported, but not
-  deleted yet.
+  wait a minute).
 - Classes can be created and listed, but not edited or deactivated yet.
 - A transferred child's learning story can't be opened from the class screen
   yet (only reactivating them brings the story back into reach).
-- The report PDF has no photos; a PDF of the learning story with photos
-  doesn't exist yet.
+- A PDF of the whole learning story (all events with photos) doesn't exist
+  yet; report PDFs hold up to 12 chosen images.
 - **Photo display performance:** full photos are decrypted and sent to the
   screen; there are no thumbnails yet. This is fine for 10 events at a time,
   but thumbnails would make long stories faster.

@@ -1,6 +1,6 @@
 [project]
 name = "kidnotes-mobile"
-version = "0.1.0"
+version = "0.2.0"
 description = "RelatórioFácil Infantil - learning stories (photos and notes of significant moments) for early childhood education."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,14 +28,35 @@ dev = [
     "cryptography>=41",
     "httpx>=0.27",
     "pytest>=8.0",
+    # Linter (same version here and in CI: .github/workflows/ci.yml).
+    "ruff==0.17.3",
     # Tests read the generated PDFs back and render them (not bundled into the app).
     "pypdf>=4.0",
     "pypdfium2>=4.0",
+    # Makes real JPEG/PNG test images (EXIF orientation, transparency...). Tests only:
+    # the app writes photos into the PDF without Pillow (reports/images.py).
+    "pillow>=10.0",
 ]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+# Lint: `ruff check .` (CI runs it on every push and pull request).
+[tool.ruff]
+line-length = 100
+target-version = "py310"  # the oldest Python in requires-python
+extend-exclude = [".flet"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes: unused imports/variables, undefined names...
+    "I",   # import order
+    "B",   # bugbear: likely bugs
+    "UP",  # pyupgrade: modern syntax for the target Python
+]
 
 # Mobile build configuration used by `flet build apk | aab | ipa`.
 # Docs: https://docs.flet.dev/publish/

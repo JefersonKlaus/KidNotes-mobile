@@ -35,12 +35,20 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "age.years.one": "{count} year old",
         "age.years.other": "{count} years old",
         # Dashboard
-        "dashboard.greeting": "Hello, teacher! 👋",
         "dashboard.title": "Your classes",
-        "dashboard.choose_class": "Choose a class to get started",
         "dashboard.add_class": "Add new class",
-        "dashboard.students_count.one": "{count} child • Tap to open",
-        "dashboard.students_count.other": "{count} children • Tap to open",
+        "dashboard.students_count.one": "{count} child • Tap to manage the students",
+        "dashboard.students_count.other": "{count} children • Tap to manage the students",
+        "classes.subtitle": "Manage the students or choose the principal class",
+        "classes.principal": "Principal",
+        "classes.set_default": "Set as principal class",
+        "classes.is_default": "Principal class: the app opens on it",
+        "classes.default_set": "{name} is now the principal class.",
+        "home.no_class_title": "No class yet",
+        "home.no_class_message": "Create your first class in Classes (☰ menu).",
+        "home.open_classes": "Open classes",
+        "menu.home": "Home",
+        "menu.classes": "Classes",
         "dashboard.empty_title": "No classes yet",
         "dashboard.empty_message": "Tap “Add new class” to create your first class.",
         # New class form
@@ -89,29 +97,69 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "sent to Groq, an AI service outside Brazil. Names are replaced before sending "
             "and photos are never sent. Always review the text before sharing it."
         ),
-        "reports.api_key": "Groq API key",
-        "reports.api_key_help": (
+        "reports.api_key_missing": (
+            "To generate reports, add your Groq API key in Settings."
+        ),
+        "reports.month_group": "{month} {year}",
+        "menu.open": "Menu",
+        "menu.settings": "Settings",
+        "settings.title": "Settings",
+        "settings.account": "Account",
+        "settings.ai_title": "AI reports (Groq)",
+        "settings.api_key": "Groq API key",
+        "settings.api_key_help": (
             "Create a key at console.groq.com. It is stored encrypted on this device."
         ),
-        "reports.api_key_save": "Save key",
-        "reports.api_key_configured": "Groq API key configured",
-        "reports.api_key_change": "Change",
-        "reports.api_key_saved": "API key saved.",
+        "settings.api_key_save": "Save key",
+        "settings.api_key_configured": "Groq API key configured",
+        "settings.api_key_change": "Change",
+        "settings.api_key_remove": "Remove",
+        "settings.api_key_saved": "API key saved.",
+        "settings.api_key_removed": "API key removed.",
+        "settings.api_key_env": (
+            "Using GROQ_API_KEY from the environment (development). Save a key here to "
+            "replace it."
+        ),
+        "settings.error.empty_key": "Paste the API key.",
         "reports.error.no_students": "Select at least one student.",
         "reports.error.invalid_period": "The start date must be before the end date.",
-        "reports.error.missing_key": "Add your Groq API key first.",
-        "reports.error.empty_key": "Paste the API key.",
+        "reports.error.missing_key": "Add your Groq API key in Settings.",
+        "reports.instructions": "Instructions for the report (optional)",
+        "reports.instructions_hint": (
+            "E.g.: Organize in three parts: Interactions, Language and Next steps. Follow "
+            "the BNCC fields of experience. Simple language for families."
+        ),
+        "reports.instructions_help": (
+            "The AI follows the structure, standards and tone you write here, but only with "
+            "what is in your records. Saved for the next reports."
+        ),
+        "reports.delete": "Delete report",
+        "delete_report.title": "Delete report?",
+        "delete_report.message": (
+            "The report of {name} ({start} to {end}) will be deleted. This can't be undone. "
+            "The events of the learning story are not affected."
+        ),
+        "delete_report.confirm": "Delete",
+        "delete_report.error": "Couldn't delete the report. Please try again.",
+        "delete_report.done": "Report deleted.",
         "reports.status.waiting": "Waiting",
         "reports.status.generating": "Writing the report...",
         "reports.status.done": "Report ready",
         "reports.status.no_events": "No events in this period",
-        "reports.status.error.missing_key": "Add your Groq API key first.",
+        "reports.status.error.missing_key": "Add your Groq API key in Settings.",
         "reports.status.error.invalid_key": "Invalid API key.",
         "reports.status.error.rate_limited": "Too many requests. Wait a minute and try again.",
         "reports.status.error.timeout": "The AI service took too long. Try again.",
         "reports.status.error.network": "No internet connection.",
         "reports.status.error.service": "The AI service had a problem. Try again later.",
         "reports.status.error.empty": "The AI returned an empty text. Try again.",
+        "reports.status.error.ungrounded": (
+            "The AI text was not based on your records, so it was discarded. Try again."
+        ),
+        "reports.status.error.model": (
+            "The AI model is not available for this API key. Check the models allowed "
+            "in your Groq project."
+        ),
         "reports.open": "Open",
         "reports.saved_title": "Generated reports",
         "reports.saved_item": "{start} to {end} · generated on {date}",
@@ -122,7 +170,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "report_review.notice": (
             "Draft written by AI from your records. Review and edit it before sharing."
         ),
-        "report_review.save_pdf": "Save PDF",
+        "report_review.save_text": "Save text",
+        "report_review.generate_pdf": "Generate PDF",
+        "report_review.saved": "Report saved.",
+        "report_review.save_failed": "Couldn't save the report. Please try again.",
         "report_review.share_pdf": "Share PDF",
         "report_review.pdf_saved": "PDF saved.",
         "report_review.export_failed": "Couldn't create the PDF. Please try again.",
@@ -136,6 +187,26 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "report_pdf.period": "Period: {start} to {end}",
         "report_pdf.issued": "Issued on {date}",
         "report_pdf.signature": "Teacher",
+        "report_pdf.photos": "Photo records",
+        "report_review.photos_title": "Images in the report",
+        "report_review.photos_hint": "They go into the PDF, after the text.",
+        "report_review.add_photos": "Add images",
+        "report_review.remove_photo": "Remove image",
+        "report_review.photo_removed": "Image removed from the report.",
+        "report_review.photo_unavailable": "Image not available",
+        "report_photos.title": "Choose images",
+        "report_photos.hint": (
+            "Tap the photos to choose them. They go into the PDF, after the text, in this order."
+        ),
+        "report_photos.insert": "Insert images ({count})",
+        "report_photos.empty_title": "No photos in this period",
+        "report_photos.empty_message": "The events of {name} from {start} to {end} have no photos.",
+        "report_photos.unsupported": "Not supported in the PDF",
+        "report_photos.max": "Up to {count} images per report.",
+        "report_photos.inserted.one": "1 image in the report.",
+        "report_photos.inserted.other": "{count} images in the report.",
+        "report_photos.none": "The report has no images.",
+        "report_photos.save_failed": "Couldn't save the images. Please try again.",
         "report_pdf.footer": "RelatórioFácil Infantil · Page {page} of {pages}",
         # Startup
         "startup.db_error_title": "Your data can't be opened",
@@ -153,7 +224,9 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "students.add_event": "Add event",
         "students.add": "Add student",
         "students.empty_title": "No students yet",
-        "students.empty_message": "Tap “Add student” to add the first child to this class.",
+        "students.empty_message": "Add the children of this class in Classes (☰ menu).",
+        "students.manage_empty_message": "Tap “Add student” to add the first child to this class.",
+        "students.manage_hint": "Tap a child to edit. ⋮ removes them from the class.",
         "students.birth_info": "{age} • Born {date}",
         "students.no_birth_date": "Birth date not set",
         "students.more_options": "More options",
@@ -268,12 +341,20 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "age.years.one": "{count} ano",
         "age.years.other": "{count} anos",
         # Dashboard
-        "dashboard.greeting": "Olá, professora! 👋",
         "dashboard.title": "Suas turmas",
-        "dashboard.choose_class": "Escolha uma turma para começar",
         "dashboard.add_class": "Adicionar nova turma",
-        "dashboard.students_count.one": "{count} criança • Toque para abrir",
-        "dashboard.students_count.other": "{count} crianças • Toque para abrir",
+        "dashboard.students_count.one": "{count} criança • Toque para gerenciar os alunos",
+        "dashboard.students_count.other": "{count} crianças • Toque para gerenciar os alunos",
+        "classes.subtitle": "Gerencie os alunos ou escolha a turma principal",
+        "classes.principal": "Principal",
+        "classes.set_default": "Definir como turma principal",
+        "classes.is_default": "Turma principal: o app abre nela",
+        "classes.default_set": "{name} agora é a turma principal.",
+        "home.no_class_title": "Nenhuma turma ainda",
+        "home.no_class_message": "Crie sua primeira turma em Turmas (menu ☰).",
+        "home.open_classes": "Abrir turmas",
+        "menu.home": "Início",
+        "menu.classes": "Turmas",
         "dashboard.empty_title": "Nenhuma turma ainda",
         "dashboard.empty_message": (
             "Toque em “Adicionar nova turma” para criar sua primeira turma."
@@ -325,24 +406,59 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "antes do envio e as fotos nunca são enviadas. Sempre revise o texto antes de "
             "compartilhar."
         ),
-        "reports.api_key": "Chave da API Groq",
-        "reports.api_key_help": (
+        "reports.api_key_missing": (
+            "Para gerar relatórios, adicione sua chave da API Groq em Configurações."
+        ),
+        "reports.month_group": "{month} de {year}",
+        "menu.open": "Menu",
+        "menu.settings": "Configurações",
+        "settings.title": "Configurações",
+        "settings.account": "Conta",
+        "settings.ai_title": "Relatórios com IA (Groq)",
+        "settings.api_key": "Chave da API Groq",
+        "settings.api_key_help": (
             "Crie uma chave em console.groq.com. Ela fica guardada criptografada neste "
             "dispositivo."
         ),
-        "reports.api_key_save": "Salvar chave",
-        "reports.api_key_configured": "Chave da API Groq configurada",
-        "reports.api_key_change": "Alterar",
-        "reports.api_key_saved": "Chave salva.",
+        "settings.api_key_save": "Salvar chave",
+        "settings.api_key_configured": "Chave da API Groq configurada",
+        "settings.api_key_change": "Alterar",
+        "settings.api_key_remove": "Remover",
+        "settings.api_key_saved": "Chave salva.",
+        "settings.api_key_removed": "Chave removida.",
+        "settings.api_key_env": (
+            "Usando a GROQ_API_KEY do ambiente (desenvolvimento). Salve uma chave aqui para "
+            "substituí-la."
+        ),
+        "settings.error.empty_key": "Cole a chave da API.",
         "reports.error.no_students": "Selecione pelo menos um aluno.",
         "reports.error.invalid_period": "A data inicial precisa ser anterior à data final.",
-        "reports.error.missing_key": "Adicione primeiro sua chave da API Groq.",
-        "reports.error.empty_key": "Cole a chave da API.",
+        "reports.error.missing_key": "Adicione sua chave da API Groq em Configurações.",
+        "reports.instructions": "Orientações para o relatório (opcional)",
+        "reports.instructions_hint": (
+            "Ex.: Organize em três partes: Interações, Linguagem e Próximos passos. Siga os "
+            "campos de experiência da BNCC. Linguagem simples para as famílias."
+        ),
+        "reports.instructions_help": (
+            "A IA segue a estrutura, os padrões e o tom que você escrever aqui, mas só com o "
+            "que está nos seus registros. Fica salvo para os próximos relatórios."
+        ),
+        "reports.delete": "Excluir relatório",
+        "delete_report.title": "Excluir relatório?",
+        "delete_report.message": (
+            "O relatório de {name} ({start} a {end}) será excluído. Isso não pode ser "
+            "desfeito. Os eventos da história de aprendizagem não são afetados."
+        ),
+        "delete_report.confirm": "Excluir",
+        "delete_report.error": "Não foi possível excluir o relatório. Tente novamente.",
+        "delete_report.done": "Relatório excluído.",
         "reports.status.waiting": "Aguardando",
         "reports.status.generating": "Escrevendo o relatório...",
         "reports.status.done": "Relatório pronto",
         "reports.status.no_events": "Nenhum evento neste período",
-        "reports.status.error.missing_key": "Adicione primeiro sua chave da API Groq.",
+        "reports.status.error.missing_key": (
+            "Adicione sua chave da API Groq em Configurações."
+        ),
         "reports.status.error.invalid_key": "Chave da API inválida.",
         "reports.status.error.rate_limited": (
             "Muitas solicitações. Aguarde um minuto e tente de novo."
@@ -351,6 +467,13 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "reports.status.error.network": "Sem conexão com a internet.",
         "reports.status.error.service": "O serviço de IA teve um problema. Tente mais tarde.",
         "reports.status.error.empty": "A IA retornou um texto vazio. Tente de novo.",
+        "reports.status.error.ungrounded": (
+            "O texto da IA não se baseou nos seus registros e foi descartado. Tente de novo."
+        ),
+        "reports.status.error.model": (
+            "O modelo de IA não está disponível para esta chave da API. Verifique os "
+            "modelos permitidos no seu projeto Groq."
+        ),
         "reports.open": "Abrir",
         "reports.saved_title": "Relatórios gerados",
         "reports.saved_item": "{start} a {end} · gerado em {date}",
@@ -362,7 +485,10 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
             "Rascunho escrito por IA a partir dos seus registros. Revise e edite antes de "
             "compartilhar."
         ),
-        "report_review.save_pdf": "Salvar PDF",
+        "report_review.save_text": "Salvar texto",
+        "report_review.generate_pdf": "Gerar PDF",
+        "report_review.saved": "Relatório salvo.",
+        "report_review.save_failed": "Não foi possível salvar o relatório. Tente novamente.",
         "report_review.share_pdf": "Compartilhar PDF",
         "report_review.pdf_saved": "PDF salvo.",
         "report_review.export_failed": "Não foi possível criar o PDF. Tente novamente.",
@@ -376,6 +502,28 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "report_pdf.period": "Período: {start} a {end}",
         "report_pdf.issued": "Emitido em {date}",
         "report_pdf.signature": "Professor(a)",
+        "report_pdf.photos": "Registros fotográficos",
+        "report_review.photos_title": "Imagens do relatório",
+        "report_review.photos_hint": "Elas entram no PDF, depois do texto.",
+        "report_review.add_photos": "Adicionar imagens",
+        "report_review.remove_photo": "Remover imagem",
+        "report_review.photo_removed": "Imagem removida do relatório.",
+        "report_review.photo_unavailable": "Imagem indisponível",
+        "report_photos.title": "Escolher imagens",
+        "report_photos.hint": (
+            "Toque nas fotos para escolher. Elas entram no PDF, depois do texto, nesta ordem."
+        ),
+        "report_photos.insert": "Inserir imagens ({count})",
+        "report_photos.empty_title": "Nenhuma foto neste período",
+        "report_photos.empty_message": (
+            "Os eventos de {name} de {start} a {end} não têm fotos."
+        ),
+        "report_photos.unsupported": "Formato não aceito no PDF",
+        "report_photos.max": "No máximo {count} imagens por relatório.",
+        "report_photos.inserted.one": "1 imagem no relatório.",
+        "report_photos.inserted.other": "{count} imagens no relatório.",
+        "report_photos.none": "O relatório não tem imagens.",
+        "report_photos.save_failed": "Não foi possível salvar as imagens. Tente novamente.",
         "report_pdf.footer": "RelatórioFácil Infantil · Página {page} de {pages}",
         # Startup
         "startup.db_error_title": "Não foi possível abrir seus dados",
@@ -393,9 +541,11 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
         "students.add_event": "Adicionar evento",
         "students.add": "Adicionar aluno",
         "students.empty_title": "Nenhum aluno ainda",
-        "students.empty_message": (
+        "students.empty_message": "Adicione as crianças desta turma em Turmas (menu ☰).",
+        "students.manage_empty_message": (
             "Toque em “Adicionar aluno” para incluir a primeira criança nesta turma."
         ),
+        "students.manage_hint": "Toque em uma criança para editar. ⋮ remove da turma.",
         "students.birth_info": "{age} • Nasc. {date}",
         "students.no_birth_date": "Data de nascimento não informada",
         "students.more_options": "Mais opções",
@@ -506,6 +656,14 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
 }
 
 
+MONTH_NAMES = {
+    "en": ["January", "February", "March", "April", "May", "June", "July", "August",
+           "September", "October", "November", "December"],
+    "pt": ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto",
+           "setembro", "outubro", "novembro", "dezembro"],
+}
+
+
 def resolve_language(locales: Sequence[ft.Locale] | None) -> str:
     """Return the app language for the device's locales (primary locale first)."""
     if not locales:
@@ -543,6 +701,12 @@ class Translator:
 
     def format_date(self, value: date) -> str:
         return value.strftime(self.t("format.date"))
+
+    def format_month(self, value: date) -> str:
+        """"July 2025" / "Julho de 2025" (month names don't depend on the OS locale)."""
+        month = MONTH_NAMES[self.language][value.month - 1]
+        return self.t("reports.month_group", month=month[0].upper() + month[1:],
+                      year=value.year)
 
     def format_age(self, birth_date: date, today: date | None = None) -> str:
         """'8 months old' under one year, then '3 years old'."""
